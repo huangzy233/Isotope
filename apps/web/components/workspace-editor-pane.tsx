@@ -32,6 +32,9 @@ export function WorkspaceEditorPane({ projectId }: { projectId: string }) {
   const [content, setContent] = useState<string | null>(null);
   const [contentLoading, setContentLoading] = useState(false);
   const [contentError, setContentError] = useState<string | null>(null);
+  const [staleRememberedPath, setStaleRememberedPath] = useState<
+    string | null
+  >(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -43,6 +46,7 @@ export function WorkspaceEditorPane({ projectId }: { projectId: string }) {
     setSelectedPath(null);
     setContent(null);
     setContentError(null);
+    setStaleRememberedPath(null);
 
     void (async () => {
       try {
@@ -77,6 +81,7 @@ export function WorkspaceEditorPane({ projectId }: { projectId: string }) {
           } catch {
             // ignore storage errors
           }
+          setStaleRememberedPath(remembered);
         }
 
         setFiles(fileList);
@@ -153,6 +158,7 @@ export function WorkspaceEditorPane({ projectId }: { projectId: string }) {
 
   const onSelectFile = useCallback(
     (path: string) => {
+      setStaleRememberedPath(null);
       setSelectedPath(path);
       try {
         localStorage.setItem(openFileStorageKey(projectId), path);
@@ -232,6 +238,13 @@ export function WorkspaceEditorPane({ projectId }: { projectId: string }) {
               {content}
             </pre>
           </>
+        ) : staleRememberedPath ? (
+          <div className="flex flex-1 items-center justify-center p-4">
+            <EmptyState
+              title="文件不存在或已删除"
+              description="该文件已不在工作区中，请从左侧重新选择。"
+            />
+          </div>
         ) : (
           <div className="flex flex-1 items-center justify-center p-4">
             <EmptyState
