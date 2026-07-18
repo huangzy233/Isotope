@@ -4,27 +4,31 @@
 
 @layer base {
   :root {
-    /* Background #F8FAFC · Card #FFFFFF · Border #E5E7EB · Primary #5B5BF7 */
-    --background: 210 40% 98%;
-    --foreground: 222 47% 11%;
+    /* Neutral Tool — see docs/superpowers/specs/2026-07-18-ui-design-system.md */
+    --background: 210 40% 98%; /* #F8FAFC */
+    --foreground: 222 47% 11%; /* #0F172A */
     --card: 0 0% 100%;
     --card-foreground: 222 47% 11%;
     --popover: 0 0% 100%;
     --popover-foreground: 222 47% 11%;
-    --primary: 240 91% 66%;
+    --primary: 222 47% 11%; /* near-black, NOT purple */
     --primary-foreground: 0 0% 100%;
     --secondary: 210 40% 96%;
     --secondary-foreground: 222 47% 11%;
     --muted: 210 40% 96%;
     --muted-foreground: 215 16% 47%;
-    --accent: 240 100% 97%;
-    --accent-foreground: 240 60% 45%;
+    --accent: 210 40% 96%;
+    --accent-foreground: 222 47% 11%;
     --destructive: 0 72% 51%;
     --destructive-foreground: 0 0% 100%;
-    --border: 220 13% 91%;
-    --input: 220 13% 91%;
-    --ring: 240 91% 66%;
-    --radius: 0.75rem; /* 12px */
+    --success: 142 76% 36%;
+    --success-foreground: 0 0% 100%;
+    --warning: 32 95% 44%;
+    --warning-foreground: 0 0% 100%;
+    --border: 214 32% 91%; /* #E2E8F0 */
+    --input: 214 32% 91%;
+    --ring: 222 47% 11%;
+    --radius: 0.5rem; /* 8px */
     --shadow-soft: 0 1px 2px rgba(15, 23, 42, 0.04), 0 1px 3px rgba(15, 23, 42, 0.06);
   }
 }

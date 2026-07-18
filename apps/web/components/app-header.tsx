@@ -22,10 +22,10 @@ export function AppHeader({ username }: { username: string }) {
 
   return (
     <header className="sticky top-0 z-20 border-b border-border bg-card/80 backdrop-blur-md">
-      <div className="mx-auto flex h-14 max-w-page items-center justify-between px-6">
+      <div className="flex h-14 items-center justify-between px-6">
         <Link
           href="/"
-          className="text-sm font-semibold tracking-tight text-foreground transition-colors duration-150 hover:text-primary"
+          className="text-sm font-semibold tracking-tight text-foreground transition-opacity duration-150 hover:opacity-80"
         >
           Isotope
         </Link>

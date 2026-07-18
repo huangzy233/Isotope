@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { LoginForm } from "@/components/login-form";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { readSession } from "@/lib/auth";
 
 export default async function LoginPage() {
@@ -9,20 +10,23 @@ export default async function LoginPage() {
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center px-4 py-16">
-      <div className="w-full max-w-md space-y-8">
-        <div className="space-y-2 text-center">
-          <p className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">
-            Isotope
-          </p>
+    <main className="flex min-h-screen items-center justify-center bg-background px-4 py-12">
+      <div className="w-full max-w-md space-y-6">
+        <div className="space-y-1 text-center">
           <h1 className="text-2xl font-semibold tracking-tight text-foreground">
-            欢迎回来
+            Isotope
           </h1>
           <p className="text-sm text-muted-foreground">使用演示账号登录以继续</p>
         </div>
-        <div className="rounded-lg border border-border bg-card p-8 shadow-soft">
-          <LoginForm />
-        </div>
+        <Card>
+          <CardHeader>
+            <CardTitle>登录</CardTitle>
+            <CardDescription>仅支持配置的内置账号</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <LoginForm />
+          </CardContent>
+        </Card>
       </div>
     </main>
   );
