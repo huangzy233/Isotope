@@ -65,7 +65,7 @@ data/
     build/                       # 空目录预留（本步不写产物）
 ```
 
-`data/` 保持 gitignore；SQLite 与项目目录均属运行时数据。
+`data/` 运行时数据不进 git：现有忽略 `data/projects/**`；实现时补上 `data/*.sqlite`（及 `-wal`/`-shm` 若出现）。
 
 ## 5. 数据模型
 
