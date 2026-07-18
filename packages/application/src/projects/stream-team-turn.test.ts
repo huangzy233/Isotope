@@ -224,6 +224,53 @@ describe("beginTeamTurn", () => {
     ).toBe(true);
   });
 
+  it("silentHandoff does not append user but still runs assistant", async () => {
+    const { project, messages: seeded } = createProject(
+      {
+        ownerUserId: "demo",
+        requirement: "统一文案",
+        mode: "team",
+      },
+      workspace,
+    );
+    const seedAssistant = seeded.find((m) => m.role === "assistant");
+    workspace.updateMessage(seedAssistant!.id, { content: "先前规划" });
+    workspace.updateProjectMeta(project.id, {
+      planConfirmed: true,
+      confirmedRequirement: "摘要X",
+      planEnabled: false,
+      teamEnabled: true,
+    });
+
+    const before = workspace.listMessages(project.id);
+    const beforeUserCount = before.filter((m) => m.role === "user").length;
+    const lastUserBefore = before.filter((m) => m.role === "user").at(-1);
+
+    const begun = beginTeamTurn(
+      {
+        ownerUserId: "demo",
+        projectId: project.id,
+        action: "send",
+        silentHandoff: true,
+      },
+      teamDeps(workspace, llmFromScript(happyPathRounds)),
+    );
+
+    expect(begun.ok).toBe(true);
+    if (!begun.ok) return;
+    const events = await runAndCollect(project.id, begun.run);
+
+    const after = workspace.listMessages(project.id);
+    const afterUsers = after.filter((m) => m.role === "user");
+    expect(afterUsers).toHaveLength(beforeUserCount);
+    expect(afterUsers.at(-1)?.content).toBe(lastUserBefore?.content);
+    expect(after.some((m) => m.content === "摘要X")).toBe(false);
+
+    expect(events.some((e) => e.type === "done")).toBe(true);
+    expect(after.length).toBeGreaterThan(before.length);
+    expect(after.at(-1)?.role).toBe("assistant");
+  });
+
   it("errors when Mike does not create_task and never starts Alex", async () => {
     const { project } = createProject(
       {

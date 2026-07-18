@@ -207,11 +207,13 @@ export async function POST(request: Request, context: RouteContext) {
         { ownerUserId: session.username, projectId: id },
         workspace,
       ) ?? project;
-    const agentName = fresh.planEnabled
-      ? "Pat"
-      : fresh.teamEnabled
-        ? "Mike"
-        : "Alex";
+    const errorKind = resolveTurnKind(fresh);
+    const agentName =
+      errorKind === "plan_clarify"
+        ? "Pat"
+        : errorKind === "team"
+          ? "Mike"
+          : "Alex";
     const messages = workspace.listMessages(id);
     if (body.action === "continue") {
       const last = messages.at(-1);

@@ -201,6 +201,85 @@ describe("beginPlanTurn", () => {
     ).toBe(true);
   });
 
+  it("send + confirm_requirement with teamEnabled reports nextTurn team", async () => {
+    const { project, messages: seeded } = createProject(
+      {
+        ownerUserId: "demo",
+        requirement: "做一个待办应用",
+        mode: "engineer",
+      },
+      workspace,
+    );
+    enablePlan(workspace, project.id, { teamEnabled: true });
+    const seedAssistant = seeded.find((m) => m.role === "assistant");
+    expect(seedAssistant).toBeTruthy();
+    workspace.updateMessage(seedAssistant!.id, { content: "先聊聊需求" });
+
+    const summary = "  待办应用：增删改查 + 本地存储  ";
+    const begun = beginPlanTurn(
+      {
+        ownerUserId: "demo",
+        projectId: project.id,
+        action: "send",
+        content: "就按这个做吧",
+      },
+      {
+        workspace,
+        llm: llmFromScript([
+          [
+            {
+              type: "tool_calls",
+              toolCalls: [
+                {
+                  id: "c1",
+                  type: "function",
+                  function: {
+                    name: "confirm_requirement",
+                    arguments: JSON.stringify({ summary }),
+                  },
+                },
+              ],
+            },
+            { type: "finished", finishReason: "tool_calls" },
+          ],
+          [
+            { type: "content_delta", text: "已确认需求，接下来交给团队。" },
+            { type: "finished", finishReason: "stop" },
+          ],
+        ]),
+        agent: createRequirementAgent({ systemPrompt: "test" }),
+        maxToolRounds: 8,
+      },
+    );
+
+    expect(begun.ok).toBe(true);
+    if (!begun.ok) return;
+
+    const events = await runAndCollect(project.id, begun.run);
+
+    const again = workspace.getProject(project.id)!;
+    expect(again.planEnabled).toBe(false);
+    expect(again.planConfirmed).toBe(true);
+    expect(again.confirmedRequirement).toBe(summary.trim());
+    expect(again.teamEnabled).toBe(true);
+
+    const last = workspace.listMessages(project.id).at(-1);
+    expect(last?.content).toBe("已确认需求，接下来交给团队。");
+    expect(last?.agentName).toBe("Pat");
+
+    expect(
+      events.some(
+        (e) =>
+          e.type === "done" &&
+          e.filesChanged === false &&
+          e.previewEnqueued === false &&
+          e.planConfirmed === true &&
+          e.nextTurn === "team" &&
+          e.messageId === last?.id,
+      ),
+    ).toBe(true);
+  });
+
   it("unconfirmed turn keeps filesChanged and previewEnqueued false", async () => {
     const { project, messages: seeded } = createProject(
       {
