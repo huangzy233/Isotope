@@ -15,12 +15,17 @@ import {
   retryStuckAssignedTask,
   type TeamTurnEvent,
 } from "./stream-team-turn.js";
+import { isTurnHubActive, subscribeTurn } from "./turn-hub.js";
 import { releaseTurnLock, tryAcquireTurnLock } from "./turn-lock.js";
 
 const templatePath = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "../../../../templates/vite-react",
 );
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 function readySnapshot(): PreviewStatusSnapshot {
   return {
@@ -55,6 +60,22 @@ function llmFromScript(rounds: LlmStreamEvent[][]): LlmClient {
   };
 }
 
+function llmWithDelay(
+  rounds: LlmStreamEvent[][],
+  delayMs: number,
+): LlmClient {
+  let i = 0;
+  return {
+    async *complete() {
+      await delay(delayMs);
+      const events = rounds[i++] ?? [
+        { type: "finished", finishReason: "stop" } as const,
+      ];
+      for (const ev of events) yield ev;
+    },
+  };
+}
+
 function teamDeps(
   workspace: ReturnType<typeof createFsSqliteWorkspace>,
   llm: LlmClient,
@@ -71,6 +92,53 @@ function teamDeps(
     maxToolRounds: 8,
   };
 }
+
+async function runAndCollect(
+  projectId: string,
+  run: () => Promise<void>,
+): Promise<TeamTurnEvent[]> {
+  const events: TeamTurnEvent[] = [];
+  const unsub = subscribeTurn(projectId, (e) =>
+    events.push(e as TeamTurnEvent),
+  );
+  await run();
+  unsub?.();
+  return events;
+}
+
+const happyPathRounds: LlmStreamEvent[][] = [
+  [
+    {
+      type: "tool_calls",
+      toolCalls: [
+        {
+          id: "c1",
+          type: "function",
+          function: {
+            name: "create_task",
+            arguments: JSON.stringify({
+              title: "统一文案",
+              assignee: "Alex",
+            }),
+          },
+        },
+      ],
+    },
+    { type: "finished", finishReason: "tool_calls" },
+  ],
+  [
+    { type: "content_delta", text: "已指派给 Alex" },
+    { type: "finished", finishReason: "stop" },
+  ],
+  [
+    { type: "content_delta", text: "标题已更新" },
+    { type: "finished", finishReason: "stop" },
+  ],
+  [
+    { type: "content_delta", text: "本轮任务已全部完成，标题已按要求更新。" },
+    { type: "finished", finishReason: "stop" },
+  ],
+];
 
 describe("beginTeamTurn", () => {
   let dataRoot: string;
@@ -99,7 +167,6 @@ describe("beginTeamTurn", () => {
     workspace.updateMessage(seedAssistant!.id, { content: "先前规划" });
 
     const preview = mockPreview();
-    const events: TeamTurnEvent[] = [];
     const begun = beginTeamTurn(
       {
         ownerUserId: "demo",
@@ -107,48 +174,12 @@ describe("beginTeamTurn", () => {
         action: "send",
         content: "请改首页标题",
       },
-      teamDeps(
-        workspace,
-        llmFromScript([
-          [
-            {
-              type: "tool_calls",
-              toolCalls: [
-                {
-                  id: "c1",
-                  type: "function",
-                  function: {
-                    name: "create_task",
-                    arguments: JSON.stringify({
-                      title: "统一文案",
-                      assignee: "Alex",
-                    }),
-                  },
-                },
-              ],
-            },
-            { type: "finished", finishReason: "tool_calls" },
-          ],
-          [
-            { type: "content_delta", text: "已指派给 Alex" },
-            { type: "finished", finishReason: "stop" },
-          ],
-          [
-            { type: "content_delta", text: "标题已更新" },
-            { type: "finished", finishReason: "stop" },
-          ],
-          [
-            { type: "content_delta", text: "本轮任务已全部完成，标题已按要求更新。" },
-            { type: "finished", finishReason: "stop" },
-          ],
-        ]),
-        preview,
-      ),
+      teamDeps(workspace, llmFromScript(happyPathRounds), preview),
     );
 
     expect(begun.ok).toBe(true);
     if (!begun.ok) return;
-    await begun.run((ev) => events.push(ev));
+    const events = await runAndCollect(project.id, begun.run);
 
     const speakers = events.filter((e) => e.type === "speaker");
     expect(speakers).toHaveLength(3);
@@ -202,7 +233,6 @@ describe("beginTeamTurn", () => {
       },
       workspace,
     );
-    const events: TeamTurnEvent[] = [];
     const begun = beginTeamTurn(
       {
         ownerUserId: "demo",
@@ -222,7 +252,7 @@ describe("beginTeamTurn", () => {
 
     expect(begun.ok).toBe(true);
     if (!begun.ok) return;
-    await begun.run((ev) => events.push(ev));
+    const events = await runAndCollect(project.id, begun.run);
 
     expect(events.some((e) => e.type === "speaker" && e.agentName === "Mike")).toBe(
       true,
@@ -247,7 +277,6 @@ describe("beginTeamTurn", () => {
     const seedAssistant = seeded.find((m) => m.role === "assistant");
     workspace.updateMessage(seedAssistant!.id, { content: "先前规划" });
 
-    const events: TeamTurnEvent[] = [];
     let round = 0;
     const llm: LlmClient = {
       async *complete() {
@@ -293,7 +322,7 @@ describe("beginTeamTurn", () => {
 
     expect(begun.ok).toBe(true);
     if (!begun.ok) return;
-    await begun.run((ev) => events.push(ev));
+    const events = await runAndCollect(project.id, begun.run);
 
     expect(
       events.some((e) => e.type === "task" && e.status === "failed"),
@@ -319,7 +348,6 @@ describe("beginTeamTurn", () => {
       },
       workspace,
     );
-    const events: TeamTurnEvent[] = [];
     const begun = beginTeamTurn(
       {
         ownerUserId: "demo",
@@ -335,7 +363,7 @@ describe("beginTeamTurn", () => {
 
     expect(begun.ok).toBe(true);
     if (!begun.ok) return;
-    await begun.run((ev) => events.push(ev));
+    const events = await runAndCollect(project.id, begun.run);
 
     const last = workspace.listMessages(project.id).at(-1);
     expect(last?.agentName).toBe("Mike");
@@ -348,6 +376,108 @@ describe("beginTeamTurn", () => {
       ),
     ).toBe(true);
     expect(workspace.listTasks(project.id)).toHaveLength(0);
+  });
+
+  it("second begin while active returns conflict; subscribe gets events without second task", async () => {
+    const { project, messages: seeded } = createProject(
+      {
+        ownerUserId: "demo",
+        requirement: "统一文案",
+        mode: "team",
+      },
+      workspace,
+    );
+    const seedAssistant = seeded.find((m) => m.role === "assistant");
+    workspace.updateMessage(seedAssistant!.id, { content: "先前规划" });
+
+    const deps = teamDeps(workspace, llmWithDelay(happyPathRounds, 40));
+
+    const first = beginTeamTurn(
+      {
+        ownerUserId: "demo",
+        projectId: project.id,
+        action: "send",
+        content: "请改首页标题",
+      },
+      deps,
+    );
+    expect(first.ok).toBe(true);
+    if (!first.ok) return;
+    expect(isTurnHubActive(project.id)).toBe(true);
+
+    const second = beginTeamTurn(
+      {
+        ownerUserId: "demo",
+        projectId: project.id,
+        action: "send",
+        content: "重连误开第二轮",
+      },
+      deps,
+    );
+    expect(second.ok).toBe(false);
+    if (second.ok) return;
+    expect(second.status).toBe("conflict");
+
+    // 模拟重连：只 subscribe，不再 begin
+    const events: TeamTurnEvent[] = [];
+    const unsub = subscribeTurn(project.id, (e) =>
+      events.push(e as TeamTurnEvent),
+    );
+    expect(unsub).not.toBeNull();
+
+    await first.run();
+    unsub?.();
+
+    expect(events.some((e) => e.type === "speaker")).toBe(true);
+    expect(events.some((e) => e.type === "done")).toBe(true);
+    expect(workspace.listTasks(project.id)).toHaveLength(1);
+    expect(isTurnHubActive(project.id)).toBe(false);
+  });
+
+  it("throwing subscriber does not mark task failed or 生成失败 on mike", async () => {
+    const { project, messages: seeded } = createProject(
+      {
+        ownerUserId: "demo",
+        requirement: "统一文案",
+        mode: "team",
+      },
+      workspace,
+    );
+    const seedAssistant = seeded.find((m) => m.role === "assistant");
+    workspace.updateMessage(seedAssistant!.id, { content: "先前规划" });
+
+    const begun = beginTeamTurn(
+      {
+        ownerUserId: "demo",
+        projectId: project.id,
+        action: "send",
+        content: "请改首页标题",
+      },
+      teamDeps(workspace, llmFromScript(happyPathRounds)),
+    );
+    expect(begun.ok).toBe(true);
+    if (!begun.ok) return;
+
+    subscribeTurn(project.id, () => {
+      throw new Error("Invalid state: Controller is already closed");
+    });
+
+    await begun.run();
+
+    const tasks = workspace.listTasks(project.id);
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0]?.status).toBe("completed");
+
+    const mikeMsgs = workspace
+      .listMessages(project.id)
+      .filter((m) => m.agentName === "Mike");
+    expect(
+      mikeMsgs.every((m) => !m.content.includes("生成失败")),
+    ).toBe(true);
+    const alexMsg = workspace
+      .listMessages(project.id)
+      .find((m) => m.agentName === "Alex");
+    expect(alexMsg?.content).toBe("标题已更新");
   });
 
   it("retryStuckAssignedTask runs Alex and completes the task", async () => {

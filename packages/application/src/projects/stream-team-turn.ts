@@ -8,11 +8,17 @@ import type {
   TaskStatus,
   WorkspaceStore,
 } from "@isotope/workspace";
+import { checkpointProcess } from "./checkpoint-process.js";
 import { enqueuePreviewBuild } from "./enqueue-preview-build.js";
 import { getProject } from "./get-project.js";
 import { ASSISTANT_PLACEHOLDER } from "./placeholder.js";
 import type { TaskEventBus } from "./task-event-bus.js";
 import type { EngineerTurnInput } from "./stream-engineer-turn.js";
+import {
+  destroyTurnHub,
+  ensureTurnHub,
+  publishTurnEvent,
+} from "./turn-hub.js";
 import { releaseTurnLock, tryAcquireTurnLock } from "./turn-lock.js";
 
 export type TeamTurnEvent =
@@ -72,7 +78,7 @@ export type BeginTeamTurnResult =
   | { ok: false; status: "not_found" | "bad_request" | "conflict" }
   | {
       ok: true;
-      run: (emit: (event: TeamTurnEvent) => void) => Promise<void>;
+      run: () => Promise<void>;
     };
 
 function historyForProject(
@@ -91,18 +97,20 @@ function historyForProject(
 
 function trackProcess(
   process: MessageProcess,
-  emit: (event: TeamTurnEvent) => void,
+  publish: (event: TeamTurnEvent) => void,
+  checkpoint: () => void,
 ) {
   return {
-    onToken: (text: string) => emit({ type: "token", text }),
+    onToken: (text: string) => publish({ type: "token", text }),
     onThinking: (text: string) => {
       const last = process.steps.at(-1);
       if (last?.type === "thinking") {
         last.text += text;
       } else {
         process.steps.push({ type: "thinking", text });
+        checkpoint();
       }
-      emit({ type: "thinking", text });
+      publish({ type: "thinking", text });
     },
     onTool: (ev: {
       id: string;
@@ -143,7 +151,8 @@ function trackProcess(
           });
         }
       }
-      emit({
+      checkpoint();
+      publish({
         type: "tool",
         id: ev.id,
         name: ev.name,
@@ -153,15 +162,15 @@ function trackProcess(
       });
     },
     onStatus: (phase: "thinking" | "running" | "streaming") =>
-      emit({ type: "status", phase }),
+      publish({ type: "status", phase }),
   };
 }
 
 function emitTask(
-  emit: (event: TeamTurnEvent) => void,
+  publish: (event: TeamTurnEvent) => void,
   task: Task,
 ): void {
-  emit({
+  publish({
     type: "task",
     taskId: task.id,
     status: task.status,
@@ -174,7 +183,7 @@ function failTask(
   deps: TeamTurnDeps,
   taskId: string | undefined,
   error?: string,
-  emit?: (event: TeamTurnEvent) => void,
+  publish?: (event: TeamTurnEvent) => void,
 ): void {
   if (!taskId) return;
   const existing = deps.workspace.getTask(taskId);
@@ -186,7 +195,7 @@ function failTask(
   if (failed) {
     deps.bus.publish({ type: "task.failed", task: failed, error });
     deps.bus.publish({ type: "task.updated", task: failed, prevStatus });
-    if (emit) emitTask(emit, failed);
+    if (publish) emitTask(publish, failed);
   }
 }
 
@@ -195,25 +204,19 @@ async function runAlexForTask(input: {
   ownerUserId: string;
   task: Task;
   deps: TeamTurnDeps;
-  emit?: (event: TeamTurnEvent) => void;
+  publish?: (event: TeamTurnEvent) => void;
   extraUserContent?: string;
 }): Promise<{ messageId: string; filesChanged: boolean; previewEnqueued: boolean }> {
-  const { projectId, ownerUserId, task, deps, emit, extraUserContent } = input;
+  const { projectId, ownerUserId, task, deps, publish, extraUserContent } = input;
   const prevStatus = task.status;
   const running = deps.workspace.updateTask(task.id, { status: "running" });
   if (!running) {
     throw new Error("任务不存在");
   }
   deps.bus.publish({ type: "task.updated", task: running, prevStatus });
-  emit?.(
-    {
-      type: "task",
-      taskId: running.id,
-      status: running.status,
-      title: running.title,
-      assignee: running.assignee,
-    },
-  );
+  if (publish) {
+    emitTask(publish, running);
+  }
 
   const alexMsg = deps.workspace.appendMessage({
     projectId,
@@ -223,17 +226,16 @@ async function runAlexForTask(input: {
     taskId: task.id,
   });
   deps.workspace.updateTask(task.id, { assigneeMessageId: alexMsg.id });
-  emit?.({ type: "speaker", agentName: "Alex", messageId: alexMsg.id });
+  publish?.({ type: "speaker", agentName: "Alex", messageId: alexMsg.id });
 
   const process: MessageProcess = { steps: [] };
-  const callbacks = emit
-    ? trackProcess(process, emit)
-    : {
-        onToken: () => {},
-        onThinking: undefined,
-        onTool: undefined,
-        onStatus: undefined,
-      };
+  const checkpoint = () =>
+    checkpointProcess(deps.workspace, alexMsg.id, process);
+  const callbacks = trackProcess(
+    process,
+    publish ?? (() => {}),
+    checkpoint,
+  );
 
   const history = historyForProject(deps.workspace, projectId);
   if (extraUserContent) {
@@ -271,15 +273,9 @@ async function runAlexForTask(input: {
         task: completed,
         prevStatus: "running",
       });
-      emit?.(
-        {
-          type: "task",
-          taskId: completed.id,
-          status: completed.status,
-          title: completed.title,
-          assignee: completed.assignee,
-        },
-      );
+      if (publish) {
+        emitTask(publish, completed);
+      }
     }
 
     let previewEnqueued = false;
@@ -307,7 +303,7 @@ async function runAlexForTask(input: {
         ? { content: msg, process }
         : { content: msg };
     deps.workspace.updateMessage(alexMsg.id, failurePatch);
-    failTask(deps, task.id, msg, emit);
+    failTask(deps, task.id, msg, publish);
     throw err;
   }
 }
@@ -316,9 +312,9 @@ async function runAlexForTask(input: {
 async function maybeRunMikeSummary(input: {
   projectId: string;
   deps: TeamTurnDeps;
-  emit?: (event: TeamTurnEvent) => void;
+  publish?: (event: TeamTurnEvent) => void;
 }): Promise<string | null> {
-  const { projectId, deps, emit } = input;
+  const { projectId, deps, publish } = input;
   if (hasOpenTasks(deps.workspace, projectId)) {
     return null;
   }
@@ -329,21 +325,21 @@ async function maybeRunMikeSummary(input: {
     content: "",
     agentName: "Mike",
   });
-  emit?.({
+  publish?.({
     type: "speaker",
     agentName: "Mike",
     messageId: summaryMsg.id,
   });
 
   const process: MessageProcess = { steps: [] };
-  const callbacks = emit
-    ? trackProcess(process, emit)
-    : {
-        onToken: () => {},
-        onThinking: () => {},
-        onTool: () => {},
-        onStatus: () => {},
-      };
+  const checkpoint = () =>
+    checkpointProcess(deps.workspace, summaryMsg.id, process);
+  const noopPublish = () => {};
+  const callbacks = trackProcess(
+    process,
+    publish ?? noopPublish,
+    checkpoint,
+  );
 
   const summaryAgent = {
     displayName: "Mike" as const,
@@ -414,6 +410,8 @@ export function beginTeamTurn(
     return { ok: false, status: "conflict" };
   }
 
+  ensureTurnHub(input.projectId);
+
   if (input.action === "send") {
     for (const m of deps.workspace.listMessages(input.projectId)) {
       if (m.role === "assistant" && m.content === ASSISTANT_PLACEHOLDER) {
@@ -431,7 +429,10 @@ export function beginTeamTurn(
 
   return {
     ok: true,
-    run: async (emit) => {
+    run: async () => {
+      const publish = (event: TeamTurnEvent) =>
+        publishTurnEvent(input.projectId, event);
+
       let createdTaskId: string | undefined;
       let mikeMessageId = "";
       const mikeProcess: MessageProcess = { steps: [] };
@@ -445,9 +446,15 @@ export function beginTeamTurn(
               agentName: "Mike",
             }).id;
 
-        emit({ type: "speaker", agentName: "Mike", messageId: mikeMessageId });
+        publish({ type: "speaker", agentName: "Mike", messageId: mikeMessageId });
 
-        const mikeCallbacks = trackProcess(mikeProcess, emit);
+        const mikeCheckpoint = () =>
+          checkpointProcess(deps.workspace, mikeMessageId, mikeProcess);
+        const mikeCallbacks = trackProcess(
+          mikeProcess,
+          publish,
+          mikeCheckpoint,
+        );
 
         const taskPort: TaskToolPort = {
           createTask: (args: { title: string; assignee: "Alex" }) => {
@@ -461,7 +468,7 @@ export function beginTeamTurn(
             createdTaskId = task.id;
             deps.workspace.updateMessage(mikeMessageId, { taskId: task.id });
             deps.bus.publish({ type: "task.created", task });
-            emitTask(emit, task);
+            emitTask(publish, task);
             return {
               taskId: task.id,
               title: task.title,
@@ -486,7 +493,7 @@ export function beginTeamTurn(
         });
 
         if (!createdTaskId) {
-          emit({
+          publish({
             type: "error",
             message: "团队领导未创建任务，无法继续执行",
           });
@@ -495,7 +502,7 @@ export function beginTeamTurn(
 
         const task = deps.workspace.getTask(createdTaskId);
         if (!task) {
-          emit({ type: "error", message: "任务不存在" });
+          publish({ type: "error", message: "任务不存在" });
           return;
         }
 
@@ -504,16 +511,16 @@ export function beginTeamTurn(
           ownerUserId: input.ownerUserId,
           task,
           deps,
-          emit,
+          publish,
         });
 
         const summaryMessageId = await maybeRunMikeSummary({
           projectId: input.projectId,
           deps,
-          emit,
+          publish,
         });
 
-        emit({
+        publish({
           type: "done",
           messageId: summaryMessageId ?? alexOutcome.messageId,
           filesChanged: alexOutcome.filesChanged,
@@ -540,9 +547,10 @@ export function beginTeamTurn(
             deps.workspace.updateMessage(mikeMessageId, failurePatch);
           }
         }
-        failTask(deps, createdTaskId, msg, emit);
-        emit({ type: "error", message: msg });
+        failTask(deps, createdTaskId, msg, publish);
+        publish({ type: "error", message: msg });
       } finally {
+        destroyTurnHub(input.projectId);
         releaseTurnLock(input.projectId);
       }
     },
