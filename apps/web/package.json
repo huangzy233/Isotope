@@ -11,6 +11,8 @@
   "dependencies": {
     "@isotope/application": "workspace:*",
     "@isotope/identity": "workspace:*",
+    "@isotope/preview": "workspace:*",
+    "@isotope/sandbox": "workspace:*",
     "@isotope/workspace": "workspace:*",
     "@radix-ui/react-dialog": "^1.1.19",
     "@radix-ui/react-label": "^2.1.1",

@@ -5,6 +5,8 @@ const nextConfig: NextConfig = {
     "@isotope/application",
     "@isotope/identity",
     "@isotope/kernel",
+    "@isotope/preview",
+    "@isotope/sandbox",
     "@isotope/workspace",
   ],
   serverExternalPackages: ["better-sqlite3"],

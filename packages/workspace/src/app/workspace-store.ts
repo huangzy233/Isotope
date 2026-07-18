@@ -17,6 +17,11 @@ import {
   writeWorkspaceFile,
 } from "../infra/fs-store.js";
 
+export type ProjectPaths = {
+  workspaceDir: string;
+  buildDir: string;
+};
+
 export type WorkspaceStore = {
   createProject(input: {
     ownerUserId: string;
@@ -40,6 +45,7 @@ export type WorkspaceStore = {
   readFile(projectId: string, relativePath: string): string;
   writeFile(projectId: string, relativePath: string, content: string): void;
   listFiles(projectId: string, relativeDir?: string): string[];
+  getProjectPaths(projectId: string): ProjectPaths | null;
 };
 type ProjectRow = {
   id: string;
@@ -250,6 +256,16 @@ export function createFsSqliteWorkspace(opts: {
 
     listFiles(projectId, relativeDir) {
       return listWorkspaceFiles(projectWorkspaceDir(projectId), relativeDir);
+    },
+
+    getProjectPaths(projectId) {
+      if (!this.getProject(projectId)) {
+        return null;
+      }
+      return {
+        workspaceDir: projectWorkspaceDir(projectId),
+        buildDir: projectBuildDir(projectId),
+      };
     },
   };
 }

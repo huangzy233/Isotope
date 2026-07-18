@@ -14,8 +14,10 @@
   },
   "dependencies": {
     "@isotope/identity": "workspace:*",
+    "@isotope/preview": "workspace:*",
     "@isotope/workspace": "workspace:*"
   },
+
   "devDependencies": {
     "@types/node": "^22.10.0",
     "typescript": "^5.7.2",

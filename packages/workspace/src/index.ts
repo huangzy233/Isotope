@@ -7,5 +7,6 @@ export type {
 export { deriveProjectName } from "./domain/project-name.js";
 export {
   createFsSqliteWorkspace,
+  type ProjectPaths,
   type WorkspaceStore,
 } from "./app/workspace-store.js";

@@ -16,6 +16,12 @@ importers:
       '@isotope/identity':
         specifier: workspace:*
         version: link:../../packages/identity
+      '@isotope/preview':
+        specifier: workspace:*
+        version: link:../../packages/preview
+      '@isotope/sandbox':
+        specifier: workspace:*
+        version: link:../../packages/sandbox
       '@isotope/workspace':
         specifier: workspace:*
         version: link:../../packages/workspace
@@ -96,6 +102,9 @@ importers:
       '@isotope/identity':
         specifier: workspace:*
         version: link:../identity
+      '@isotope/preview':
+        specifier: workspace:*
+        version: link:../preview
       '@isotope/workspace':
         specifier: workspace:*
         version: link:../workspace
@@ -134,9 +143,33 @@ importers:
 
   packages/memory: {}
 
-  packages/preview: {}
+  packages/preview:
+    dependencies:
+      '@isotope/sandbox':
+        specifier: workspace:*
+        version: link:../sandbox
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.0
+        version: 22.20.1
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.7(@types/node@22.20.1)(jiti@1.21.7)(yaml@2.9.0)
 
-  packages/sandbox: {}
+  packages/sandbox:
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.0
+        version: 22.20.1
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.7(@types/node@22.20.1)(jiti@1.21.7)(yaml@2.9.0)
 
   packages/workspace:
     dependencies:

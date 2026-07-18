@@ -12,12 +12,21 @@ import { Composer } from "@/components/composer";
 import { EmptyState } from "@/components/empty-state";
 import { PanelHeader } from "@/components/panel-header";
 import { StatusBadge } from "@/components/status-badge";
+import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
 const DEFAULT_CHAT_PCT = 33.333;
 const MIN_CHAT_PCT = 22;
 const MAX_CHAT_PCT = 55;
 const SPLIT_STORAGE_KEY = "isotope.workbench.chatPct";
+
+type PreviewSnapshot = {
+  status: "idle" | "building" | "ready" | "failed";
+  revision: string | null;
+  error: string | null;
+  updatedAt: string;
+};
 
 function clampChatPct(value: number) {
   return Math.min(MAX_CHAT_PCT, Math.max(MIN_CHAT_PCT, value));
@@ -36,6 +45,7 @@ export function WorkbenchShell({
   const [error, setError] = useState<string | null>(null);
   const [chatPct, setChatPct] = useState(DEFAULT_CHAT_PCT);
   const [dragging, setDragging] = useState(false);
+  const [preview, setPreview] = useState<PreviewSnapshot | null>(null);
   const splitRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -103,6 +113,44 @@ export function WorkbenchShell({
       document.body.style.userSelect = "";
     };
   }, [dragging, updateChatPctFromClientX]);
+
+  const fetchPreview = useCallback(
+    async (ensure: boolean) => {
+      try {
+        const res = await fetch(
+          `/api/projects/${project.id}/preview${ensure ? "?ensure=1" : ""}`,
+        );
+        const data = (await res.json().catch(() => null)) as {
+          preview?: PreviewSnapshot;
+        } | null;
+        if (res.ok && data?.preview) {
+          setPreview(data.preview);
+        }
+      } catch {
+        // keep last known preview on network errors
+      }
+    },
+    [project.id],
+  );
+
+  useEffect(() => {
+    void fetchPreview(true);
+  }, [fetchPreview]);
+
+  useEffect(() => {
+    if (!preview || preview.status !== "building") return;
+    const id = window.setInterval(() => {
+      void fetchPreview(false);
+    }, 1500);
+    return () => window.clearInterval(id);
+  }, [preview?.status, fetchPreview]);
+
+  async function handleRebuild() {
+    await fetch(`/api/projects/${project.id}/preview/build`, {
+      method: "POST",
+    });
+    await fetchPreview(false);
+  }
 
   async function handleSend() {
     if (!draft.trim() || submitting) return;
@@ -221,13 +269,61 @@ export function WorkbenchShell({
         <section className="flex min-h-[50vh] min-w-0 flex-1 flex-col xl:min-h-0">
           <PanelHeader
             title="App Viewer"
-            trailing={<StatusBadge status="idle" />}
+            trailing={
+              <>
+                <StatusBadge status={preview?.status ?? "idle"} />
+                {preview?.status === "ready" ||
+                preview?.status === "building" ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => void handleRebuild()}
+                  >
+                    刷新
+                  </Button>
+                ) : null}
+              </>
+            }
           />
-          <div className="flex flex-1 flex-col justify-center bg-background p-4">
-            <EmptyState
-              title="尚未构建预览"
-              description="预览空闲。接入构建后，结果将显示在这里。"
-            />
+          <div
+            className={cn(
+              "flex min-h-0 flex-1 flex-col bg-background",
+              preview?.status === "ready" ? "" : "justify-center p-4",
+            )}
+          >
+            {preview?.status === "building" ? (
+              <div className="flex flex-col items-center gap-4">
+                <Skeleton className="h-40 w-full max-w-md" />
+                <p className="text-sm text-muted-foreground">正在构建预览…</p>
+              </div>
+            ) : preview?.status === "ready" ? (
+              <iframe
+                title="App Viewer"
+                className="h-full w-full flex-1 border-0 bg-background"
+                src={`/api/projects/${project.id}/preview/files/?r=${preview.revision ?? "0"}`}
+              />
+            ) : preview?.status === "failed" ? (
+              <EmptyState
+                title="预览构建失败"
+                description={preview.error ?? "构建失败，请稍后重试。"}
+                action={
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => void handleRebuild()}
+                  >
+                    重试
+                  </Button>
+                }
+              />
+            ) : (
+              <EmptyState
+                title="尚未构建预览"
+                description="预览空闲。打开工作台后将自动开始构建。"
+              />
+            )}
           </div>
         </section>
       </div>

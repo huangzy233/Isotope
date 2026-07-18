@@ -106,4 +106,20 @@ describe("createFsSqliteWorkspace", () => {
   it("deleteProject is safe for unknown id", () => {
     expect(() => store.deleteProject("proj_nonexistent")).not.toThrow();
   });
+
+  it("getProjectPaths returns dirs for existing project only", () => {
+    const p = store.createProject({
+      ownerUserId: "demo",
+      name: "x",
+      mode: "engineer",
+    });
+    const paths = store.getProjectPaths(p.id);
+    expect(paths?.workspaceDir).toBe(
+      path.join(dataRoot, "projects", p.id, "workspace"),
+    );
+    expect(paths?.buildDir).toBe(
+      path.join(dataRoot, "projects", p.id, "build"),
+    );
+    expect(store.getProjectPaths("proj_missing")).toBeNull();
+  });
 });
