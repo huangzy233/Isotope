@@ -40,7 +40,7 @@ export function createProject(
     projectId: project.id,
     role: "assistant",
     content: ASSISTANT_PLACEHOLDER,
-    agentName: "Alex",
+    agentName: input.mode === "team" ? "Mike" : "Alex",
   });
 
   return { project, messages: [user, assistant] };

@@ -17,3 +17,12 @@ export {
   type EngineerTurnEvent,
   type EngineerTurnInput,
 } from "./projects/stream-engineer-turn.js";
+export {
+  beginTeamTurn,
+  retryStuckAssignedTask,
+  type BeginTeamTurnResult,
+  type TeamTurnDeps,
+  type TeamTurnEvent,
+} from "./projects/stream-team-turn.js";
+export { updateProjectMode } from "./projects/update-project-mode.js";
+export { listTasks } from "./projects/list-tasks.js";

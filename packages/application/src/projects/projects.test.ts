@@ -47,6 +47,19 @@ describe("project use cases", () => {
     expect(listProjects({ ownerUserId: "demo" }, workspace)).toHaveLength(1);
   });
 
+  it("createProject team seeds Mike placeholder", () => {
+    const { messages } = createProject(
+      {
+        ownerUserId: "demo",
+        requirement: "做一个团队项目",
+        mode: "team",
+      },
+      workspace,
+    );
+    expect(messages[1]?.content).toBe(ASSISTANT_PLACEHOLDER);
+    expect(messages[1]?.agentName).toBe("Mike");
+  });
+
   it("hides other users projects", () => {
     const { project } = createProject(
       { ownerUserId: "demo", requirement: "x", mode: "team" },
