@@ -1,6 +1,7 @@
 import {
   deleteProject,
   getProject,
+  updateProjectFlags,
   updateProjectMode,
 } from "@isotope/application";
 import { NextResponse } from "next/server";
@@ -12,6 +13,10 @@ type RouteContext = { params: Promise<{ id: string }> };
 
 function parseMode(v: unknown): "engineer" | "team" | null {
   return v === "engineer" || v === "team" ? v : null;
+}
+
+function parseBool(v: unknown): boolean | undefined {
+  return typeof v === "boolean" ? v : undefined;
 }
 
 export async function GET(_request: Request, context: RouteContext) {
@@ -41,17 +46,36 @@ export async function PATCH(request: Request, context: RouteContext) {
   ensureTaskRuntime();
   const { id } = await context.params;
   const body = (await request.json().catch(() => null)) as {
+    planEnabled?: unknown;
+    teamEnabled?: unknown;
     mode?: unknown;
   } | null;
+
+  const planEnabled = parseBool(body?.planEnabled);
+  const teamEnabled = parseBool(body?.teamEnabled);
   const mode = parseMode(body?.mode);
-  if (!mode) {
+  const hasFlags = planEnabled !== undefined || teamEnabled !== undefined;
+
+  if (!hasFlags && !mode) {
     return NextResponse.json({ error: "模式无效" }, { status: 400 });
   }
 
-  const project = updateProjectMode(
-    { ownerUserId: session.username, projectId: id, mode },
-    getWorkspace(),
-  );
+  const workspace = getWorkspace();
+  const project = hasFlags
+    ? updateProjectFlags(
+        {
+          ownerUserId: session.username,
+          projectId: id,
+          ...(planEnabled !== undefined ? { planEnabled } : {}),
+          ...(teamEnabled !== undefined ? { teamEnabled } : {}),
+        },
+        workspace,
+      )
+    : updateProjectMode(
+        { ownerUserId: session.username, projectId: id, mode: mode! },
+        workspace,
+      );
+
   if (!project) {
     return NextResponse.json({ error: "项目不存在" }, { status: 404 });
   }

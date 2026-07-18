@@ -24,6 +24,10 @@ export function alexSystemPromptPath(): string {
   return path.join(monorepoRoot(), "prompts/coding/alex-system.v1.md");
 }
 
+export function patSystemPromptPath(): string {
+  return path.join(monorepoRoot(), "prompts/requirement/pat-system.v1.md");
+}
+
 export function mikeSystemPromptPath(): string {
   return path.join(monorepoRoot(), "prompts/leader/mike-system.v1.md");
 }

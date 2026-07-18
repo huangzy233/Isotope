@@ -1,16 +1,23 @@
 import {
   ASSISTANT_PLACEHOLDER,
   beginEngineerTurn,
+  beginPlanTurn,
   beginTeamTurn,
   getProject,
   isTransportDisconnectError,
   isTurnHubActive,
+  resolveTurnKind,
   subscribeTurn,
   type EngineerTurnEvent,
+  type PlanTurnEvent,
   type TeamTurnEvent,
 } from "@isotope/application";
 import { readSession } from "@/lib/auth";
-import { createTeamTurnDeps, createTurnDeps } from "@/lib/agent";
+import {
+  createPlanTurnDeps,
+  createTeamTurnDeps,
+  createTurnDeps,
+} from "@/lib/agent";
 import { getPreview } from "@/lib/preview";
 import { ensureTaskRuntime, getTaskBus } from "@/lib/task-runtime";
 import { getWorkspace } from "@/lib/workspace";
@@ -20,9 +27,11 @@ export const dynamic = "force-dynamic";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
+type TurnEvent = EngineerTurnEvent | TeamTurnEvent | PlanTurnEvent;
+
 function forwardTurnEvent(
   send: (event: string, data: unknown) => void,
-  ev: EngineerTurnEvent | TeamTurnEvent,
+  ev: TurnEvent,
 ) {
   switch (ev.type) {
     case "speaker":
@@ -60,6 +69,12 @@ function forwardTurnEvent(
         filesChanged: ev.filesChanged,
         previewEnqueued: ev.previewEnqueued,
         ...("taskId" in ev && ev.taskId ? { taskId: ev.taskId } : {}),
+        ...("planConfirmed" in ev && ev.planConfirmed !== undefined
+          ? { planConfirmed: ev.planConfirmed }
+          : {}),
+        ...("nextTurn" in ev && ev.nextTurn !== undefined
+          ? { nextTurn: ev.nextTurn }
+          : {}),
       });
       break;
     case "error":
@@ -90,7 +105,7 @@ function openTurnSse(projectId: string): Response {
         }
       };
       unsub = subscribeTurn(projectId, (ev) => {
-        forwardTurnEvent(send, ev as EngineerTurnEvent | TeamTurnEvent);
+        forwardTurnEvent(send, ev as TurnEvent);
         const type = (ev as { type?: string }).type;
         if (type === "done" || type === "error") {
           unsub?.();
@@ -131,12 +146,18 @@ export async function POST(request: Request, context: RouteContext) {
   const body = (await request.json().catch(() => null)) as {
     action?: string;
     content?: string;
+    silentHandoff?: boolean;
   } | null;
 
   if (!body || (body.action !== "continue" && body.action !== "send")) {
     return Response.json({ error: "请求无效" }, { status: 400 });
   }
-  if (body.action === "send" && !String(body.content ?? "").trim()) {
+  const silentHandoff = body.silentHandoff === true;
+  if (
+    body.action === "send" &&
+    !silentHandoff &&
+    !String(body.content ?? "").trim()
+  ) {
     return Response.json({ error: "消息不能为空" }, { status: 400 });
   }
 
@@ -165,14 +186,32 @@ export async function POST(request: Request, context: RouteContext) {
           projectId: id,
           action: "continue" as const,
         }
-      : {
-          ownerUserId: session.username,
-          projectId: id,
-          action: "send" as const,
-          content: String(body.content),
-        };
+      : silentHandoff
+        ? {
+            ownerUserId: session.username,
+            projectId: id,
+            action: "send" as const,
+            content: String(body.content ?? ""),
+            silentHandoff: true as const,
+          }
+        : {
+            ownerUserId: session.username,
+            projectId: id,
+            action: "send" as const,
+            content: String(body.content),
+          };
 
   const writeConfigError = (msg: string) => {
+    const fresh =
+      getProject(
+        { ownerUserId: session.username, projectId: id },
+        workspace,
+      ) ?? project;
+    const agentName = fresh.planEnabled
+      ? "Pat"
+      : fresh.teamEnabled
+        ? "Mike"
+        : "Alex";
     const messages = workspace.listMessages(id);
     if (body.action === "continue") {
       const last = messages.at(-1);
@@ -184,16 +223,34 @@ export async function POST(request: Request, context: RouteContext) {
         projectId: id,
         role: "assistant",
         content: msg,
-        agentName: project.mode === "team" ? "Mike" : "Alex",
+        agentName,
       });
     }
   };
 
+  const kind = resolveTurnKind(project);
+
   let begun:
+    | ReturnType<typeof beginPlanTurn>
     | ReturnType<typeof beginTeamTurn>
     | ReturnType<typeof beginEngineerTurn>;
 
-  if (project.mode === "team") {
+  if (kind === "plan_clarify") {
+    let planDeps;
+    try {
+      planDeps = createPlanTurnDeps();
+    } catch (err) {
+      const msg =
+        "生成失败：" +
+        (err instanceof Error ? err.message : "LLM 配置无效").slice(0, 300);
+      writeConfigError(msg);
+      return Response.json({ error: msg }, { status: 500 });
+    }
+    begun = beginPlanTurn(turnInput, {
+      workspace,
+      ...planDeps,
+    });
+  } else if (kind === "team") {
     let teamDeps;
     try {
       teamDeps = createTeamTurnDeps();

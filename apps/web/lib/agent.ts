@@ -3,8 +3,10 @@ import { parse } from "yaml";
 import {
   createCoderAgent,
   createLeaderAgent,
+  createRequirementAgent,
   type CoderAgent,
   type LeaderAgent,
+  type RequirementAgent,
 } from "@isotope/agents";
 import { createOpenAiCompatibleClient, type LlmClient } from "@isotope/llm";
 import {
@@ -12,6 +14,7 @@ import {
   llmConfigPath,
   mikeSummaryPromptPath,
   mikeSystemPromptPath,
+  patSystemPromptPath,
 } from "./paths";
 
 type LlmFileConfig = {
@@ -71,6 +74,20 @@ export function createTeamTurnDeps(): {
     leader: createLeaderAgent({ systemPrompt: mikePrompt }),
     leaderSummaryPrompt: mikeSummaryPrompt,
     coder: createCoderAgent({ systemPrompt: alexPrompt }),
+    maxToolRounds,
+  };
+}
+
+export function createPlanTurnDeps(): {
+  llm: LlmClient;
+  agent: RequirementAgent;
+  maxToolRounds: number;
+} {
+  const { llm, maxToolRounds } = createSharedLlm();
+  const systemPrompt = readFileSync(patSystemPromptPath(), "utf8");
+  return {
+    llm,
+    agent: createRequirementAgent({ systemPrompt }),
     maxToolRounds,
   };
 }
