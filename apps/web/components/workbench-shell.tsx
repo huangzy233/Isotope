@@ -27,6 +27,8 @@ import { CheckCircle2, ChevronUp } from "lucide-react";
 import { ToolCallGroup } from "@/components/tool-call-row";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { WorkspaceEditorPane } from "@/components/workspace-editor-pane";
 import { ComposerModeMenu } from "@/components/composer-mode-menu";
 import { cn } from "@/lib/utils";
 
@@ -34,6 +36,10 @@ const DEFAULT_CHAT_PCT = 33.333;
 const MIN_CHAT_PCT = 22;
 const MAX_CHAT_PCT = 55;
 const SPLIT_STORAGE_KEY = "isotope.workbench.chatPct";
+const VIEWER_MODE_KEY = (id: string) =>
+  `isotope.workbench.viewerMode:${id}`;
+
+type ViewerMode = "preview" | "editor";
 
 type PreviewSnapshot = {
   status: "idle" | "building" | "ready" | "failed";
@@ -288,6 +294,7 @@ export function WorkbenchShell({
   const [chatPct, setChatPct] = useState(DEFAULT_CHAT_PCT);
   const [dragging, setDragging] = useState(false);
   const [preview, setPreview] = useState<PreviewSnapshot | null>(null);
+  const [viewerMode, setViewerMode] = useState<ViewerMode>("preview");
   const splitRef = useRef<HTMLDivElement>(null);
   const continuedRef = useRef(false);
   const continueInFlightRef = useRef(false);
@@ -305,6 +312,28 @@ export function WorkbenchShell({
       // ignore storage errors
     }
   }, []);
+
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem(VIEWER_MODE_KEY(project.id));
+      if (stored === "preview" || stored === "editor") {
+        setViewerMode(stored);
+      } else {
+        setViewerMode("preview");
+      }
+    } catch {
+      setViewerMode("preview");
+    }
+  }, [project.id]);
+
+  function persistViewerMode(next: ViewerMode) {
+    setViewerMode(next);
+    try {
+      localStorage.setItem(VIEWER_MODE_KEY(project.id), next);
+    } catch {
+      // ignore storage errors
+    }
+  }
 
   useEffect(() => {
     void (async () => {
@@ -901,10 +930,24 @@ export function WorkbenchShell({
         />
 
         <section className="flex min-h-[50vh] min-w-0 flex-1 flex-col xl:min-h-0">
-          <PanelHeader
-            title="App Viewer"
-            trailing={
-              <>
+          <div className="flex h-12 shrink-0 items-center justify-between gap-3 border-b border-border px-4">
+            <Tabs
+              value={viewerMode}
+              onValueChange={(v) => {
+                if (v === "preview" || v === "editor") persistViewerMode(v);
+              }}
+            >
+              <TabsList className="h-8">
+                <TabsTrigger value="preview" className="text-xs">
+                  应用查看器
+                </TabsTrigger>
+                <TabsTrigger value="editor" className="text-xs">
+                  编辑器
+                </TabsTrigger>
+              </TabsList>
+            </Tabs>
+            {viewerMode === "preview" ? (
+              <div className="flex items-center gap-2">
                 <StatusBadge status={preview?.status ?? "idle"} />
                 {preview?.status === "ready" ||
                 preview?.status === "building" ? (
@@ -917,48 +960,54 @@ export function WorkbenchShell({
                     刷新
                   </Button>
                 ) : null}
-              </>
-            }
-          />
-          <div
-            className={cn(
-              "flex min-h-0 flex-1 flex-col bg-background",
-              preview?.status === "ready" ? "" : "justify-center p-4",
-            )}
-          >
-            {preview?.status === "building" ? (
-              <div className="flex flex-col items-center gap-4">
-                <Skeleton className="h-40 w-full max-w-md" />
-                <p className="text-sm text-muted-foreground">正在构建预览…</p>
               </div>
-            ) : preview?.status === "ready" ? (
-              <iframe
-                title="App Viewer"
-                className="h-full w-full flex-1 border-0 bg-background"
-                src={`/api/projects/${project.id}/preview/files/index.html?r=${preview.revision ?? "0"}`}
-              />
-            ) : preview?.status === "failed" ? (
-              <EmptyState
-                title="预览构建失败"
-                description={preview.error ?? "构建失败，请稍后重试。"}
-                action={
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => void handleRebuild()}
-                  >
-                    重试
-                  </Button>
-                }
-              />
-            ) : (
-              <EmptyState
-                title="尚未构建预览"
-                description="预览空闲。打开工作台后将自动开始构建。"
-              />
-            )}
+            ) : null}
           </div>
+          {viewerMode === "editor" ? (
+            <WorkspaceEditorPane projectId={project.id} />
+          ) : (
+            <div
+              className={cn(
+                "flex min-h-0 flex-1 flex-col bg-background",
+                preview?.status === "ready" ? "" : "justify-center p-4",
+              )}
+            >
+              {preview?.status === "building" ? (
+                <div className="flex flex-col items-center gap-4">
+                  <Skeleton className="h-40 w-full max-w-md" />
+                  <p className="text-sm text-muted-foreground">
+                    正在构建预览…
+                  </p>
+                </div>
+              ) : preview?.status === "ready" ? (
+                <iframe
+                  title="App Viewer"
+                  className="h-full w-full flex-1 border-0 bg-background"
+                  src={`/api/projects/${project.id}/preview/files/index.html?r=${preview.revision ?? "0"}`}
+                />
+              ) : preview?.status === "failed" ? (
+                <EmptyState
+                  title="预览构建失败"
+                  description={preview.error ?? "构建失败，请稍后重试。"}
+                  action={
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => void handleRebuild()}
+                    >
+                      重试
+                    </Button>
+                  }
+                />
+              ) : (
+                <EmptyState
+                  title="尚未构建预览"
+                  description="预览空闲。打开工作台后将自动开始构建。"
+                />
+              )}
+            </div>
+          )}
         </section>
       </div>
     </div>

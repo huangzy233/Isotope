@@ -164,7 +164,7 @@ Composer：填写需求 → 选模式 → **开始**。
 | 左：PanelHeader（对话 + Agent 状态） | Tool 详情展开 |
 | 左：消息区 | Trace / Cost 折叠 |
 | 左：Composer | 刷新等 Viewer 次要操作 |
-| 右：ViewerChrome + 预览区 | — |
+| 右：视图切换（应用查看器 / 编辑器）+ 预览或只读编辑器 | — |
 | App Shell 侧栏（项目名高亮 / 可读） | — |
 
 ### 推荐布局 + ASCII

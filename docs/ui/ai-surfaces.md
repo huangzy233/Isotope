@@ -76,6 +76,10 @@ Isotope 作为 AI 产品的界面结构与状态机。
 
 顶栏（ViewerChrome）：标题「App Viewer」+ 状态 Badge + 可选刷新。
 
+## 7.1 编辑器（只读）
+
+左文件树 + 右只读内容；无独立文件 Tab。与 App Viewer 同属右栏 Tabs 切换。
+
 ## 8. 组合件清单
 
 | 组合件 | 状态 | 职责 |
