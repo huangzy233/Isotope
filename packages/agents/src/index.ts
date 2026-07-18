@@ -10,3 +10,9 @@ export {
   type LeaderAgent,
   type TaskToolPort,
 } from "./leader/index.js";
+export {
+  REQUIREMENT_DISPLAY_NAME,
+  createRequirementAgent,
+  type ConfirmRequirementPort,
+  type RequirementAgent,
+} from "./requirement/index.js";

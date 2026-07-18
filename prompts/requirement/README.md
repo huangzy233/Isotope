@@ -1,9 +1,3 @@
 # prompts/requirement
 
-Place versioned prompt templates for the **requirement** domain here.
-
-Suggested files:
-- `system.v1.md`
-- `user.v1.md`
-- `fewshot.v1.md`
-- `meta.yaml` (model hints, variables, owner agent)
+- `pat-system.v1.md` — Pat（产品 Agent）系统提示
