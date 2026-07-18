@@ -22,5 +22,10 @@ data/projects     运行时项目数据
 
 ```bash
 pnpm install
+cp apps/web/.env.example apps/web/.env.local
+pnpm --filter @isotope/web dev
+# 或者
 pnpm dev
 ```
+
+访问 http://localhost:3000，使用演示账号登录（见 `configs/app/demo-users.yaml`，默认 `demo`/`demo`、`reviewer`/`reviewer`）。
