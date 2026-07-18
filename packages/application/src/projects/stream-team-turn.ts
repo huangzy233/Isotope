@@ -467,10 +467,18 @@ export async function retryStuckAssignedTask(
   task: Task,
   deps: TeamTurnDeps,
 ): Promise<{ ok: boolean; error?: string }> {
+  const bumpProgress = () => {
+    deps.workspace.updateTask(task.id, {
+      lastProgressAt: new Date().toISOString(),
+    });
+  };
+
   if (!tryAcquireTurnLock(task.projectId)) {
+    bumpProgress();
     return { ok: false, error: "conflict" };
   }
   try {
+    bumpProgress();
     const latest = deps.workspace.getTask(task.id);
     if (!latest || latest.status !== "assigned") {
       return { ok: false, error: "not_assigned" };

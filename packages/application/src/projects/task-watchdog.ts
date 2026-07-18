@@ -22,26 +22,41 @@ export function startTaskWatchdog(deps: TaskWatchdogDeps): () => void {
     now = () => Date.now(),
   } = deps;
 
+  const bumpProgress = (taskId: string) => {
+    workspace.updateTask(taskId, {
+      lastProgressAt: new Date(now()).toISOString(),
+    });
+  };
+
   const tick = async () => {
-    const tasks = workspace.listTasksByStatus(["assigned", "running"]);
-    const currentTime = now();
+    try {
+      const tasks = workspace.listTasksByStatus(["assigned", "running"]);
+      const currentTime = now();
 
-    for (const task of tasks) {
-      if (isTurnLocked(task.projectId)) continue;
+      for (const task of tasks) {
+        if (isTurnLocked(task.projectId)) continue;
 
-      const lastProgress = new Date(task.lastProgressAt).getTime();
-      if (currentTime - lastProgress <= stuckMs) continue;
+        const lastProgress = new Date(task.lastProgressAt).getTime();
+        if (currentTime - lastProgress <= stuckMs) continue;
 
-      if (task.status === "assigned") {
-        await onRetryAssigned(task);
-      } else if (task.status === "running") {
-        const prevStatus = task.status;
-        const updated = workspace.updateTask(task.id, { status: "failed" });
-        if (updated) {
-          bus.publish({ type: "task.failed", task: updated });
-          bus.publish({ type: "task.updated", task: updated, prevStatus });
+        if (task.status === "assigned") {
+          try {
+            await onRetryAssigned(task);
+          } catch (err) {
+            console.error("[task-watchdog] onRetryAssigned failed", task.id, err);
+            bumpProgress(task.id);
+          }
+        } else if (task.status === "running") {
+          const prevStatus = task.status;
+          const updated = workspace.updateTask(task.id, { status: "failed" });
+          if (updated) {
+            bus.publish({ type: "task.failed", task: updated });
+            bus.publish({ type: "task.updated", task: updated, prevStatus });
+          }
         }
       }
+    } catch (err) {
+      console.error("[task-watchdog] tick failed", err);
     }
   };
 

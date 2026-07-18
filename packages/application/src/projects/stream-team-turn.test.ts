@@ -15,6 +15,7 @@ import {
   retryStuckAssignedTask,
   type TeamTurnEvent,
 } from "./stream-team-turn.js";
+import { releaseTurnLock, tryAcquireTurnLock } from "./turn-lock.js";
 
 const templatePath = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -382,5 +383,84 @@ describe("beginTeamTurn", () => {
       .find((m) => m.id === updated?.assigneeMessageId);
     expect(alexMsg?.agentName).toBe("Alex");
     expect(alexMsg?.content).toBe("已改好");
+  });
+
+  it("retryStuckAssignedTask conflict advances lastProgressAt", async () => {
+    const { project } = createProject(
+      {
+        ownerUserId: "demo",
+        requirement: "统一文案",
+        mode: "team",
+      },
+      workspace,
+    );
+    const mike = workspace.appendMessage({
+      projectId: project.id,
+      role: "assistant",
+      content: "拆好了",
+      agentName: "Mike",
+    });
+    const task = workspace.createTask({
+      projectId: project.id,
+      title: "改标题",
+      assignee: "Alex",
+      status: "assigned",
+      createdByMessageId: mike.id,
+    });
+    const stuckAt = new Date(Date.now() - 120_000).toISOString();
+    workspace.updateTask(task.id, { lastProgressAt: stuckAt });
+    expect(tryAcquireTurnLock(project.id)).toBe(true);
+
+    const deps = teamDeps(workspace, llmFromScript([]));
+    const result = await retryStuckAssignedTask(task, deps);
+
+    expect(result).toEqual({ ok: false, error: "conflict" });
+    const updated = workspace.getTask(task.id);
+    expect(updated?.status).toBe("assigned");
+    expect(new Date(updated!.lastProgressAt).getTime()).toBeGreaterThan(
+      new Date(stuckAt).getTime(),
+    );
+    releaseTurnLock(project.id);
+  });
+
+  it("retryStuckAssignedTask failure advances lastProgressAt", async () => {
+    const { project } = createProject(
+      {
+        ownerUserId: "demo",
+        requirement: "统一文案",
+        mode: "team",
+      },
+      workspace,
+    );
+    const mike = workspace.appendMessage({
+      projectId: project.id,
+      role: "assistant",
+      content: "拆好了",
+      agentName: "Mike",
+    });
+    const task = workspace.createTask({
+      projectId: project.id,
+      title: "改标题",
+      assignee: "Alex",
+      status: "assigned",
+      createdByMessageId: mike.id,
+    });
+    const stuckAt = new Date(Date.now() - 120_000).toISOString();
+    workspace.updateTask(task.id, { lastProgressAt: stuckAt });
+
+    const deps = teamDeps(workspace, {
+      async *complete() {
+        throw new Error("alex boom");
+      },
+    });
+
+    const result = await retryStuckAssignedTask(task, deps);
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("alex boom");
+
+    const updated = workspace.getTask(task.id);
+    expect(new Date(updated!.lastProgressAt).getTime()).toBeGreaterThan(
+      new Date(stuckAt).getTime(),
+    );
   });
 });

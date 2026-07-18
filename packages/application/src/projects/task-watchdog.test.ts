@@ -145,4 +145,86 @@ describe("startTaskWatchdog", () => {
 
     expect(onRetryAssigned).not.toHaveBeenCalled();
   });
+
+  it("onRetryAssigned throw does not stop subsequent ticks", async () => {
+    const project = workspace.createProject({
+      ownerUserId: "demo",
+      name: "x",
+      mode: "team",
+    });
+    const taskA = workspace.createTask({
+      projectId: project.id,
+      title: "任务 A",
+      assignee: "Alex",
+      status: "assigned",
+    });
+    const taskB = workspace.createTask({
+      projectId: project.id,
+      title: "任务 B",
+      assignee: "Alex",
+      status: "assigned",
+    });
+    workspace.updateTask(taskA.id, { lastProgressAt: stuckIso() });
+    workspace.updateTask(taskB.id, { lastProgressAt: stuckIso() });
+
+    const onRetryAssigned = vi.fn(async (task) => {
+      if (task.id === taskA.id) throw new Error("boom");
+    });
+    const stop = startTaskWatchdog({
+      workspace,
+      bus: createTaskEventBus(),
+      isTurnLocked: () => false,
+      onRetryAssigned,
+      intervalMs: 20,
+      stuckMs: 90_000,
+      now: () => fixedNow,
+    });
+
+    await delay(50);
+    stop();
+
+    expect(onRetryAssigned).toHaveBeenCalledWith(
+      expect.objectContaining({ id: taskA.id }),
+    );
+    expect(onRetryAssigned).toHaveBeenCalledWith(
+      expect.objectContaining({ id: taskB.id }),
+    );
+    const afterA = workspace.getTask(taskA.id);
+    expect(new Date(afterA!.lastProgressAt).getTime()).toBeGreaterThan(
+      new Date(stuckIso()).getTime(),
+    );
+  });
+
+  it("does not re-fire assigned retry within stuckMs after onRetryAssigned throw", async () => {
+    const project = workspace.createProject({
+      ownerUserId: "demo",
+      name: "x",
+      mode: "team",
+    });
+    const task = workspace.createTask({
+      projectId: project.id,
+      title: "统一文案",
+      assignee: "Alex",
+      status: "assigned",
+    });
+    workspace.updateTask(task.id, { lastProgressAt: stuckIso() });
+
+    const onRetryAssigned = vi.fn(async () => {
+      throw new Error("boom");
+    });
+    const stop = startTaskWatchdog({
+      workspace,
+      bus: createTaskEventBus(),
+      isTurnLocked: () => false,
+      onRetryAssigned,
+      intervalMs: 15,
+      stuckMs: 90_000,
+      now: () => fixedNow,
+    });
+
+    await delay(80);
+    stop();
+
+    expect(onRetryAssigned).toHaveBeenCalledTimes(1);
+  });
 });
