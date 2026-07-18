@@ -148,7 +148,9 @@ P0：成功时从该项目最近消息现取上下文喂给 LLM；**不**在 pen
 - AC3：持久化，刷新仍可见
 - typecheck / 相关单测通过
 
-## 10. 后续（非本轮）
+## 10. 后续（P2 待办）
+
+> 已登记为 PRD §3 P2「版本 git 快照与回滚」，本轮不做。
 
 - 用 git 对 `workspace/`（排除 `node_modules`）打快照，写入 `snapshotRef`
 - 版本卡操作：恢复源码 / 可选打开对应 `previewRevision` 产物
