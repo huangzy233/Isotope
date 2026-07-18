@@ -160,6 +160,7 @@ function failTask(
   deps: TeamTurnDeps,
   taskId: string | undefined,
   error?: string,
+  emit?: (event: TeamTurnEvent) => void,
 ): void {
   if (!taskId) return;
   const existing = deps.workspace.getTask(taskId);
@@ -171,6 +172,7 @@ function failTask(
   if (failed) {
     deps.bus.publish({ type: "task.failed", task: failed, error });
     deps.bus.publish({ type: "task.updated", task: failed, prevStatus });
+    if (emit) emitTask(emit, failed);
   }
 }
 
@@ -290,7 +292,7 @@ async function runAlexForTask(input: {
         ? { content: msg, process }
         : { content: msg };
     deps.workspace.updateMessage(alexMsg.id, failurePatch);
-    failTask(deps, task.id, msg);
+    failTask(deps, task.id, msg, emit);
     throw err;
   }
 }
@@ -351,8 +353,9 @@ export function beginTeamTurn(
     ok: true,
     run: async (emit) => {
       let createdTaskId: string | undefined;
+      let mikeMessageId: string | undefined;
+      const mikeProcess: MessageProcess = { steps: [] };
       try {
-        let mikeMessageId: string;
         if (replaceId) {
           mikeMessageId = replaceId;
         } else {
@@ -366,7 +369,6 @@ export function beginTeamTurn(
 
         emit({ type: "speaker", agentName: "Mike", messageId: mikeMessageId });
 
-        const mikeProcess: MessageProcess = { steps: [] };
         const mikeCallbacks = trackProcess(mikeProcess, emit);
 
         const taskPort = {
@@ -438,7 +440,23 @@ export function beginTeamTurn(
         const msg =
           "生成失败：" +
           (err instanceof Error ? err.message : "未知错误").slice(0, 300);
-        failTask(deps, createdTaskId, msg);
+        if (mikeMessageId) {
+          const current = deps.workspace
+            .listMessages(input.projectId)
+            .find((m) => m.id === mikeMessageId);
+          if (
+            current &&
+            (current.content === "" ||
+              current.content === ASSISTANT_PLACEHOLDER)
+          ) {
+            const failurePatch =
+              mikeProcess.steps.length > 0
+                ? { content: msg, process: mikeProcess }
+                : { content: msg };
+            deps.workspace.updateMessage(mikeMessageId, failurePatch);
+          }
+        }
+        failTask(deps, createdTaskId, msg, emit);
         emit({ type: "error", message: msg });
       } finally {
         releaseTurnLock(input.projectId);

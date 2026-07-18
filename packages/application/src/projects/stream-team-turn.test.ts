@@ -223,6 +223,121 @@ describe("beginTeamTurn", () => {
     expect(events.some((e) => e.type === "done")).toBe(false);
   });
 
+  it("Alex failure emits task status failed when a task exists", async () => {
+    const { project, messages: seeded } = createProject(
+      {
+        ownerUserId: "demo",
+        requirement: "统一文案",
+        mode: "team",
+      },
+      workspace,
+    );
+    const seedAssistant = seeded.find((m) => m.role === "assistant");
+    workspace.updateMessage(seedAssistant!.id, { content: "先前规划" });
+
+    const events: TeamTurnEvent[] = [];
+    let round = 0;
+    const llm: LlmClient = {
+      async *complete() {
+        round += 1;
+        if (round === 1) {
+          yield {
+            type: "tool_calls",
+            toolCalls: [
+              {
+                id: "c1",
+                type: "function",
+                function: {
+                  name: "create_task",
+                  arguments: JSON.stringify({
+                    title: "统一文案",
+                    assignee: "Alex",
+                  }),
+                },
+              },
+            ],
+          };
+          yield { type: "finished", finishReason: "tool_calls" };
+          return;
+        }
+        if (round === 2) {
+          yield { type: "content_delta", text: "已指派给 Alex" };
+          yield { type: "finished", finishReason: "stop" };
+          return;
+        }
+        throw new Error("alex boom");
+      },
+    };
+
+    const begun = beginTeamTurn(
+      {
+        ownerUserId: "demo",
+        projectId: project.id,
+        action: "send",
+        content: "请改首页标题",
+      },
+      teamDeps(workspace, llm),
+    );
+
+    expect(begun.ok).toBe(true);
+    if (!begun.ok) return;
+    await begun.run((ev) => events.push(ev));
+
+    expect(
+      events.some((e) => e.type === "task" && e.status === "failed"),
+    ).toBe(true);
+    expect(workspace.listTasks(project.id)[0]?.status).toBe("failed");
+    expect(
+      events.some(
+        (e) => e.type === "error" && e.message.startsWith("生成失败："),
+      ),
+    ).toBe(true);
+    const alexMsg = workspace
+      .listMessages(project.id)
+      .find((m) => m.agentName === "Alex");
+    expect(alexMsg?.content.startsWith("生成失败：")).toBe(true);
+  });
+
+  it("continue Mike failure replaces placeholder content", async () => {
+    const { project } = createProject(
+      {
+        ownerUserId: "demo",
+        requirement: "统一文案",
+        mode: "team",
+      },
+      workspace,
+    );
+    const events: TeamTurnEvent[] = [];
+    const begun = beginTeamTurn(
+      {
+        ownerUserId: "demo",
+        projectId: project.id,
+        action: "continue",
+      },
+      teamDeps(workspace, {
+        async *complete() {
+          throw new Error("mike boom");
+        },
+      }),
+    );
+
+    expect(begun.ok).toBe(true);
+    if (!begun.ok) return;
+    await begun.run((ev) => events.push(ev));
+
+    const last = workspace.listMessages(project.id).at(-1);
+    expect(last?.agentName).toBe("Mike");
+    expect(last?.content).not.toBe(ASSISTANT_PLACEHOLDER);
+    expect(last?.content.startsWith("生成失败：")).toBe(true);
+    expect(last?.content).toContain("mike boom");
+    expect(
+      events.some(
+        (e) => e.type === "error" && e.message.startsWith("生成失败："),
+      ),
+    ).toBe(true);
+    expect(workspace.listTasks(project.id)).toHaveLength(0);
+  });
+
   it("retryStuckAssignedTask runs Alex and completes the task", async () => {
     const { project } = createProject(
       {
