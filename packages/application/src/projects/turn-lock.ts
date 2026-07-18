@@ -9,3 +9,7 @@ export function tryAcquireTurnLock(projectId: string): boolean {
 export function releaseTurnLock(projectId: string): void {
   locks.delete(projectId);
 }
+
+export function isTurnLocked(projectId: string): boolean {
+  return locks.has(projectId);
+}
