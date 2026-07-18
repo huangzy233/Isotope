@@ -288,6 +288,7 @@ async function runAlexForTask(input: {
         { ownerUserId, projectId },
         deps.workspace,
         deps.preview,
+        { recordVersionIntent: true },
       );
       previewEnqueued = true;
     }

@@ -12,6 +12,17 @@ export type PreviewAsset = {
   contentType: string;
 };
 
+export type BuildCompleteResult = {
+  ok: boolean;
+  revision: string | null;
+  error: string | null;
+};
+
+export type OnBuildComplete = (
+  projectId: string,
+  result: BuildCompleteResult,
+) => void;
+
 export type ResolveProjectPaths = (
   projectId: string,
 ) => { workspaceDir: string; buildDir: string } | null;

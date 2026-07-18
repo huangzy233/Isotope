@@ -221,6 +221,7 @@ export function beginEngineerTurn(
               },
               deps.workspace,
               deps.preview,
+              { recordVersionIntent: true },
             );
             previewEnqueued = true;
           }

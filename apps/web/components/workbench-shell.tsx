@@ -22,6 +22,7 @@ import { EmptyState } from "@/components/empty-state";
 import { PanelHeader } from "@/components/panel-header";
 import { StatusBadge } from "@/components/status-badge";
 import { TaskCard } from "@/components/task-card";
+import { VersionCard } from "@/components/version-card";
 import { CheckCircle2, ChevronUp } from "lucide-react";
 import { ToolCallGroup } from "@/components/tool-call-row";
 import { Button } from "@/components/ui/button";
@@ -495,6 +496,41 @@ export function WorkbenchShell({
     return () => window.clearInterval(id);
   }, [preview?.status, fetchPreview]);
 
+  const prevPreviewStatusRef = useRef<PreviewSnapshot["status"] | null>(null);
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
+
+  const refetchMessagesAfterReady = useCallback(async () => {
+    const knownIds = new Set(messagesRef.current.map((m) => m.id));
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      try {
+        const res = await fetch(`/api/projects/${project.id}/messages`);
+        const data = (await res.json().catch(() => null)) as {
+          messages?: Message[];
+        } | null;
+        if (res.ok && data?.messages) {
+          setMessages(data.messages);
+          const hasNewVersion = data.messages.some(
+            (m) => m.versionId && !knownIds.has(m.id),
+          );
+          if (hasNewVersion || attempt === 3) return;
+        }
+      } catch {
+        // ignore transient errors
+      }
+      await new Promise((r) => setTimeout(r, 800));
+    }
+  }, [project.id]);
+
+  useEffect(() => {
+    const prev = prevPreviewStatusRef.current;
+    const next = preview?.status ?? null;
+    prevPreviewStatusRef.current = next;
+    if (prev === "building" && next === "ready") {
+      void refetchMessagesAfterReady();
+    }
+  }, [preview?.status, refetchMessagesAfterReady]);
+
   useEffect(() => {
     if (continuedRef.current) return;
     const last = initialMessages.at(-1);
@@ -948,6 +984,14 @@ function MessageRow({
     : role
       ? `${effectiveName} | ${role}`
       : effectiveName;
+
+  if (message.versionId != null && message.versionNumber != null) {
+    return (
+      <li className="mr-8 flex flex-col items-start gap-1">
+        <VersionCard number={message.versionNumber} summary={message.content} />
+      </li>
+    );
+  }
 
   if (isUser) {
     return (

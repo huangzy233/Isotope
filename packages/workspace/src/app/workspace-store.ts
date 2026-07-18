@@ -9,6 +9,7 @@ import type {
   ProjectMode,
   Task,
   TaskStatus,
+  Version,
 } from "../domain/types.js";
 import { resolveWorkspaceRelativePath } from "../domain/paths.js";
 import { openWorkspaceDatabase } from "../infra/db.js";
@@ -44,6 +45,7 @@ export type WorkspaceStore = {
     agentName?: string;
     process?: MessageProcess;
     taskId?: string | null;
+    versionId?: string | null;
   }): Message;
   updateMessage(
     messageId: string,
@@ -54,6 +56,14 @@ export type WorkspaceStore = {
     },
   ): Message | null;
   listMessages(projectId: string): Message[];
+  upsertPendingVersionIntent(projectId: string): void;
+  takePendingVersionIntent(projectId: string): boolean;
+  recordVersion(input: {
+    projectId: string;
+    summary: string;
+    previewRevision?: string | null;
+  }): Version;
+  listVersions(projectId: string): Version[];
   createTask(input: {
     projectId: string;
     title: string;
@@ -101,6 +111,18 @@ type MessageRow = {
   agent_name: string | null;
   process_json: string | null;
   task_id: string | null;
+  version_id: string | null;
+  version_number?: number | null;
+};
+
+type VersionRow = {
+  id: string;
+  project_id: string;
+  number: number;
+  summary: string;
+  preview_revision: string | null;
+  snapshot_ref: string | null;
+  created_at: string;
 };
 
 type TaskRow = {
@@ -129,7 +151,7 @@ function parseProcessJson(
   }
 }
 
-function randomId(prefix: "proj_" | "msg_" | "task_"): string {
+function randomId(prefix: "proj_" | "msg_" | "task_" | "ver_"): string {
   return (
     prefix + crypto.randomUUID().replaceAll("-", "").slice(0, 16)
   );
@@ -157,6 +179,24 @@ function toMessage(row: MessageRow): Message {
     ...(row.agent_name === null ? {} : { agentName: row.agent_name }),
     ...(process === undefined ? {} : { process }),
     ...(row.task_id === null ? {} : { taskId: row.task_id }),
+    ...(row.version_id === null || row.version_id === undefined
+      ? {}
+      : { versionId: row.version_id }),
+    ...(row.version_number === null || row.version_number === undefined
+      ? {}
+      : { versionNumber: row.version_number }),
+  };
+}
+
+function toVersion(row: VersionRow): Version {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    number: row.number,
+    summary: row.summary,
+    previewRevision: row.preview_revision,
+    snapshotRef: row.snapshot_ref,
+    createdAt: row.created_at,
   };
 }
 
@@ -282,13 +322,24 @@ export function createFsSqliteWorkspace(opts: {
         ...(input.taskId === undefined || input.taskId === null
           ? {}
           : { taskId: input.taskId }),
+        ...(input.versionId === undefined || input.versionId === null
+          ? {}
+          : { versionId: input.versionId }),
       };
+      if (input.versionId) {
+        const ver = database
+          .prepare(`SELECT number FROM versions WHERE id = ?`)
+          .get(input.versionId) as { number: number } | undefined;
+        if (ver) {
+          message.versionNumber = ver.number;
+        }
+      }
       const insertAndTouchProject = database.transaction(() => {
         database
           .prepare(
             `INSERT INTO messages
-              (id, project_id, role, content, created_at, agent_name, process_json, task_id)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+              (id, project_id, role, content, created_at, agent_name, process_json, task_id, version_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           )
           .run(
             message.id,
@@ -299,6 +350,7 @@ export function createFsSqliteWorkspace(opts: {
             message.agentName ?? null,
             input.process ? JSON.stringify(input.process) : null,
             input.taskId ?? null,
+            input.versionId ?? null,
           );
         database
           .prepare("UPDATE projects SET updated_at = ? WHERE id = ?")
@@ -311,7 +363,7 @@ export function createFsSqliteWorkspace(opts: {
     updateMessage(messageId, patch) {
       const row = database
         .prepare(
-          `SELECT id, project_id, role, content, created_at, agent_name, process_json, task_id
+          `SELECT id, project_id, role, content, created_at, agent_name, process_json, task_id, version_id
            FROM messages WHERE id = ?`,
         )
         .get(messageId) as MessageRow | undefined;
@@ -348,13 +400,92 @@ export function createFsSqliteWorkspace(opts: {
     listMessages(projectId) {
       const rows = database
         .prepare(
-          `SELECT id, project_id, role, content, created_at, agent_name, process_json, task_id
-           FROM messages
-           WHERE project_id = ?
-           ORDER BY created_at ASC`,
+          `SELECT m.id, m.project_id, m.role, m.content, m.created_at, m.agent_name,
+                  m.process_json, m.task_id, m.version_id, v.number AS version_number
+           FROM messages m
+           LEFT JOIN versions v ON v.id = m.version_id
+           WHERE m.project_id = ?
+           ORDER BY m.created_at ASC`,
         )
         .all(projectId) as MessageRow[];
       return rows.map(toMessage);
+    },
+
+    upsertPendingVersionIntent(projectId) {
+      const now = new Date().toISOString();
+      database
+        .prepare(
+          `INSERT INTO pending_version_intents (project_id, created_at)
+           VALUES (?, ?)
+           ON CONFLICT(project_id) DO UPDATE SET created_at = excluded.created_at`,
+        )
+        .run(projectId, now);
+    },
+
+    takePendingVersionIntent(projectId) {
+      const take = database.transaction(() => {
+        const row = database
+          .prepare(
+            `SELECT project_id FROM pending_version_intents WHERE project_id = ?`,
+          )
+          .get(projectId) as { project_id: string } | undefined;
+        if (!row) return false;
+        database
+          .prepare(`DELETE FROM pending_version_intents WHERE project_id = ?`)
+          .run(projectId);
+        return true;
+      });
+      return take();
+    },
+
+    recordVersion(input) {
+      const now = new Date().toISOString();
+      const insert = database.transaction(() => {
+        const maxRow = database
+          .prepare(
+            `SELECT COALESCE(MAX(number), 0) AS max_number
+             FROM versions WHERE project_id = ?`,
+          )
+          .get(input.projectId) as { max_number: number };
+        const version: Version = {
+          id: randomId("ver_"),
+          projectId: input.projectId,
+          number: maxRow.max_number + 1,
+          summary: input.summary,
+          previewRevision: input.previewRevision ?? null,
+          snapshotRef: null,
+          createdAt: now,
+        };
+        database
+          .prepare(
+            `INSERT INTO versions
+              (id, project_id, number, summary, preview_revision, snapshot_ref, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          )
+          .run(
+            version.id,
+            version.projectId,
+            version.number,
+            version.summary,
+            version.previewRevision,
+            version.snapshotRef,
+            version.createdAt,
+          );
+        return version;
+      });
+      return insert();
+    },
+
+    listVersions(projectId) {
+      const rows = database
+        .prepare(
+          `SELECT id, project_id, number, summary, preview_revision, snapshot_ref, created_at
+           FROM versions
+           WHERE project_id = ?
+           ORDER BY number ASC`,
+        )
+        .all(projectId) as VersionRow[];
+      return rows.map(toVersion);
     },
 
     createTask(input) {
@@ -503,6 +634,10 @@ export function createFsSqliteWorkspace(opts: {
         throw new Error("Invalid path");
       }
       const tx = database.transaction(() => {
+        database
+          .prepare("DELETE FROM pending_version_intents WHERE project_id = ?")
+          .run(id);
+        database.prepare("DELETE FROM versions WHERE project_id = ?").run(id);
         database.prepare("DELETE FROM tasks WHERE project_id = ?").run(id);
         database.prepare("DELETE FROM messages WHERE project_id = ?").run(id);
         database.prepare("DELETE FROM projects WHERE id = ?").run(id);

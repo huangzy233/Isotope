@@ -7,6 +7,7 @@ import type {
   PreviewService,
   PreviewStatusSnapshot,
   ResolveProjectPaths,
+  OnBuildComplete,
 } from "../domain/types.js";
 
 const MAX_ERROR_BYTES = 2048;
@@ -100,10 +101,25 @@ export function createPreviewService(opts: {
   sandbox: Sandbox;
   buildTimeoutMs?: number;
   staleBuildingMs?: number;
+  onBuildComplete?: OnBuildComplete;
 }): PreviewService {
   const staleBuildingMs = opts.staleBuildingMs ?? DEFAULT_STALE_BUILDING_MS;
   let queue: Promise<void> = Promise.resolve();
   const active = new Set<string>();
+
+  function notifyBuildComplete(
+    projectId: string,
+    result: {
+      ok: boolean;
+      revision: string | null;
+      error: string | null;
+    },
+  ) {
+    if (!opts.onBuildComplete) return;
+    void Promise.resolve()
+      .then(() => opts.onBuildComplete?.(projectId, result))
+      .catch(() => {});
+  }
 
   function schedule(projectId: string, job: () => Promise<void>) {
     active.add(projectId);
@@ -151,18 +167,31 @@ export function createPreviewService(opts: {
           buildDir: paths.buildDir,
           timeoutMs: opts.buildTimeoutMs,
         });
+        const revision = Date.now().toString(36);
         writeStatus(file, {
           status: "ready",
-          revision: Date.now().toString(36),
+          revision,
           error: null,
           updatedAt: nowIso(),
         });
+        notifyBuildComplete(projectId, {
+          ok: true,
+          revision,
+          error: null,
+        });
       } catch (err) {
+        const error = formatError(err);
+        const revision = readStatusFile(file)?.revision ?? null;
         writeStatus(file, {
           status: "failed",
-          revision: readStatusFile(file)?.revision ?? null,
-          error: formatError(err),
+          revision,
+          error,
           updatedAt: nowIso(),
+        });
+        notifyBuildComplete(projectId, {
+          ok: false,
+          revision,
+          error,
         });
       }
     });
