@@ -3,6 +3,7 @@ import {
   beginEngineerTurn,
   beginTeamTurn,
   getProject,
+  isTransportDisconnectError,
   isTurnHubActive,
   subscribeTurn,
   type EngineerTurnEvent,
@@ -18,13 +19,6 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 type RouteContext = { params: Promise<{ id: string }> };
-
-function isClosedControllerError(err: unknown): boolean {
-  return (
-    err instanceof Error &&
-    /Controller is already closed|Invalid state/i.test(err.message)
-  );
-}
 
 function forwardTurnEvent(
   send: (event: string, data: unknown) => void,
@@ -87,7 +81,7 @@ function openTurnSse(projectId: string): Response {
             ),
           );
         } catch (err) {
-          if (isClosedControllerError(err)) {
+          if (isTransportDisconnectError(err)) {
             unsub?.();
             unsub = null;
             return;

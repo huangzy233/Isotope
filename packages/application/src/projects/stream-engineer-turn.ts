@@ -7,6 +7,7 @@ import { checkpointProcess } from "./checkpoint-process.js";
 import { enqueuePreviewBuild } from "./enqueue-preview-build.js";
 import { getProject } from "./get-project.js";
 import { ASSISTANT_PLACEHOLDER } from "./placeholder.js";
+import { isTransportDisconnectError } from "./transport-error.js";
 import {
   destroyTurnHub,
   ensureTurnHub,
@@ -256,6 +257,10 @@ export function beginEngineerTurn(
             previewEnqueued,
           });
         } catch (err) {
+          // SSE / stream controller 关闭属于传输层，不得写成业务「生成失败」
+          if (isTransportDisconnectError(err)) {
+            return;
+          }
           const msg =
             "生成失败：" +
             (err instanceof Error ? err.message : "未知错误").slice(0, 300);

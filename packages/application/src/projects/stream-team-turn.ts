@@ -14,6 +14,7 @@ import { getProject } from "./get-project.js";
 import { ASSISTANT_PLACEHOLDER } from "./placeholder.js";
 import type { TaskEventBus } from "./task-event-bus.js";
 import type { EngineerTurnInput } from "./stream-engineer-turn.js";
+import { isTransportDisconnectError } from "./transport-error.js";
 import {
   destroyTurnHub,
   ensureTurnHub,
@@ -295,6 +296,9 @@ async function runAlexForTask(input: {
       previewEnqueued,
     };
   } catch (err) {
+    if (isTransportDisconnectError(err)) {
+      throw err;
+    }
     const msg =
       "生成失败：" +
       (err instanceof Error ? err.message : "未知错误").slice(0, 300);
@@ -364,6 +368,9 @@ async function maybeRunMikeSummary(input: {
       process: result.process,
     });
   } catch (err) {
+    if (isTransportDisconnectError(err)) {
+      return null;
+    }
     const msg =
       "总结生成失败：" +
       (err instanceof Error ? err.message : "未知错误").slice(0, 300);
@@ -528,6 +535,9 @@ export function beginTeamTurn(
           taskId: createdTaskId,
         });
       } catch (err) {
+        if (isTransportDisconnectError(err)) {
+          return;
+        }
         const msg =
           "生成失败：" +
           (err instanceof Error ? err.message : "未知错误").slice(0, 300);

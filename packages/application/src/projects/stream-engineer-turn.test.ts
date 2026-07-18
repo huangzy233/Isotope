@@ -451,6 +451,45 @@ describe("beginEngineerTurn", () => {
     ).toBe(true);
   });
 
+  it("Controller is already closed does not write 生成失败", async () => {
+    const { project } = createProject(
+      {
+        ownerUserId: "demo",
+        requirement: "x",
+        mode: "engineer",
+      },
+      workspace,
+    );
+
+    const begun = beginEngineerTurn(
+      {
+        ownerUserId: "demo",
+        projectId: project.id,
+        action: "continue",
+      },
+      {
+        workspace,
+        preview: mockPreview(),
+        llm: {
+          async *complete() {
+            throw new Error("Invalid state: Controller is already closed");
+          },
+        },
+        agent: createCoderAgent({ systemPrompt: "test" }),
+        maxToolRounds: 8,
+      },
+    );
+
+    expect(begun.ok).toBe(true);
+    if (!begun.ok) return;
+    const events = await runAndCollect(project.id, begun.run);
+
+    const last = workspace.listMessages(project.id).at(-1);
+    expect(last?.content).toBe(ASSISTANT_PLACEHOLDER);
+    expect(last?.content.startsWith("生成失败")).toBe(false);
+    expect(events.some((e) => e.type === "error")).toBe(false);
+  });
+
   it("publish to closed subscriber does not write 生成失败", async () => {
     const { project } = createProject(
       {

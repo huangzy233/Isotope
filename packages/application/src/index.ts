@@ -32,6 +32,7 @@ export {
 } from "./projects/task-event-bus.js";
 export { startTaskWatchdog } from "./projects/task-watchdog.js";
 export { isTurnLocked } from "./projects/turn-lock.js";
+export { isTransportDisconnectError } from "./projects/transport-error.js";
 export {
   destroyTurnHub,
   ensureTurnHub,
