@@ -45,7 +45,7 @@ export function HomeShell() {
 
   return (
     <div className="mx-auto w-full max-w-3xl px-6 py-8">
-      <div className="space-y-8">
+      <div className="space-y-6">
         <section className="space-y-1">
           <h1 className="text-xl font-semibold tracking-tight text-foreground">
             从一句话开始构建
