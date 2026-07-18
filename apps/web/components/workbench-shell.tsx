@@ -309,6 +309,7 @@ export function WorkbenchShell({
   const continuedRef = useRef(false);
   const continueInFlightRef = useRef(false);
   const reconnectAttemptRef = useRef(0);
+  const continueStartProcessRef = useRef<Message["process"]>(undefined);
   const currentAssistantIdRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -586,6 +587,7 @@ export function WorkbenchShell({
     continuedRef.current = true;
     continueInFlightRef.current = true;
     reconnectAttemptRef.current = 0;
+    continueStartProcessRef.current = last.process;
     currentAssistantIdRef.current = lastId;
     setSubmitting(true);
     setAgentStatus(hasProcessSteps ? "running" : "thinking");
@@ -683,6 +685,16 @@ export function WorkbenchShell({
         if (reconnectAttemptRef.current < 1) {
           reconnectAttemptRef.current += 1;
           queueMicrotask(() => {
+            // Hub subscribeTurn replays the full buffer; clear live deltas so
+            // onToken/mergeThinking/tool handlers do not duplicate content/steps.
+            const id = currentAssistantIdRef.current ?? lastId;
+            setMessages((prev) =>
+              updateMessageById(prev, id, (m) => ({
+                ...m,
+                content: "",
+                process: continueStartProcessRef.current,
+              })),
+            );
             attachContinueStream();
           });
         } else {
