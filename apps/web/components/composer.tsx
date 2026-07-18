@@ -14,6 +14,7 @@ export function Composer({
   submitting = false,
   disabled = false,
   toolbar,
+  chips,
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -24,11 +25,13 @@ export function Composer({
   submitting?: boolean;
   disabled?: boolean;
   toolbar?: ReactNode;
+  chips?: ReactNode;
 }) {
   const isDisabled = disabled || submitting;
 
   return (
     <div className="space-y-3 rounded-lg border border-border bg-card p-3">
+      {chips ? <div className="min-h-0">{chips}</div> : null}
       <Textarea
         value={value}
         onChange={(event) => onChange(event.target.value)}

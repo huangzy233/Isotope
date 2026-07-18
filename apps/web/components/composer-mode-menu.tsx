@@ -1,7 +1,6 @@
 "use client";
 
-import { Plus, Users } from "lucide-react";
-import type { ProjectMode } from "@isotope/workspace";
+import { ClipboardList, Plus, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Popover,
@@ -11,17 +10,27 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 
+function statusText(planEnabled: boolean, teamEnabled: boolean): string {
+  if (planEnabled && teamEnabled) return "当前：Plan + Team";
+  if (planEnabled) return "当前：Plan（Pat 澄清需求）";
+  if (teamEnabled) return "当前：Team（Mike 分配任务）";
+  return "当前：Engineer（Alex 直改）";
+}
+
 export function ComposerModeMenu({
-  mode,
-  onModeChange,
+  planEnabled,
+  teamEnabled,
+  onFlagsChange,
   disabled = false,
 }: {
-  mode: ProjectMode;
-  onModeChange: (mode: ProjectMode) => void;
+  planEnabled: boolean;
+  teamEnabled: boolean;
+  onFlagsChange: (next: {
+    planEnabled: boolean;
+    teamEnabled: boolean;
+  }) => void;
   disabled?: boolean;
 }) {
-  const teamOn = mode === "team";
-
   return (
     <Popover>
       <PopoverTrigger asChild>
@@ -44,6 +53,32 @@ export function ComposerModeMenu({
             "hover:bg-accent/60",
           )}
         >
+          <ClipboardList
+            aria-hidden
+            className="size-4 shrink-0 text-muted-foreground"
+          />
+          <label
+            htmlFor="composer-plan-mode"
+            className="min-w-0 flex-1 cursor-pointer text-sm text-foreground"
+          >
+            Plan
+          </label>
+          <Switch
+            id="composer-plan-mode"
+            checked={planEnabled}
+            disabled={disabled}
+            onCheckedChange={(checked) => {
+              onFlagsChange({ planEnabled: checked, teamEnabled });
+            }}
+            aria-label="Plan 模式"
+          />
+        </div>
+        <div
+          className={cn(
+            "flex items-center gap-3 rounded-md px-3 py-2.5",
+            "hover:bg-accent/60",
+          )}
+        >
           <Users
             aria-hidden
             className="size-4 shrink-0 text-muted-foreground"
@@ -52,27 +87,21 @@ export function ComposerModeMenu({
             htmlFor="composer-team-mode"
             className="min-w-0 flex-1 cursor-pointer text-sm text-foreground"
           >
-            团队模式
+            团队
           </label>
           <Switch
             id="composer-team-mode"
-            checked={teamOn}
+            checked={teamEnabled}
             disabled={disabled}
             onCheckedChange={(checked) => {
-              onModeChange(checked ? "team" : "engineer");
+              onFlagsChange({ planEnabled, teamEnabled: checked });
             }}
             aria-label="团队模式"
           />
         </div>
-        {teamOn ? (
-          <p className="px-3 pb-2 text-xs text-muted-foreground">
-            当前：Team（Mike 分配任务）
-          </p>
-        ) : (
-          <p className="px-3 pb-2 text-xs text-muted-foreground">
-            当前：Engineer（Alex 直改）
-          </p>
-        )}
+        <p className="px-3 pb-2 text-xs text-muted-foreground">
+          {statusText(planEnabled, teamEnabled)}
+        </p>
       </PopoverContent>
     </Popover>
   );

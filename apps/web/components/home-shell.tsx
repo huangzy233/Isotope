@@ -2,16 +2,25 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import type { ProjectMode } from "@isotope/workspace";
 import { Composer } from "@/components/composer";
+import { ComposerModeChips } from "@/components/composer-mode-chips";
 import { ComposerModeMenu } from "@/components/composer-mode-menu";
 
 export function HomeShell() {
   const router = useRouter();
   const [requirement, setRequirement] = useState("");
-  const [mode, setMode] = useState<ProjectMode>("engineer");
+  const [planEnabled, setPlanEnabled] = useState(false);
+  const [teamEnabled, setTeamEnabled] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  function handleFlagsChange(next: {
+    planEnabled: boolean;
+    teamEnabled: boolean;
+  }) {
+    setPlanEnabled(next.planEnabled);
+    setTeamEnabled(next.teamEnabled);
+  }
 
   async function handleStart() {
     if (!requirement.trim() || submitting) return;
@@ -22,7 +31,7 @@ export function HomeShell() {
       const res = await fetch("/api/projects", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ requirement, mode }),
+        body: JSON.stringify({ requirement, planEnabled, teamEnabled }),
       });
       const data = (await res.json().catch(() => null)) as {
         project?: { id: string };
@@ -65,11 +74,20 @@ export function HomeShell() {
             submitLabel="开始"
             submittingLabel="创建中…"
             submitting={submitting}
+            chips={
+              <ComposerModeChips
+                planEnabled={planEnabled}
+                teamEnabled={teamEnabled}
+                disabled={submitting}
+                onFlagsChange={handleFlagsChange}
+              />
+            }
             toolbar={
               <ComposerModeMenu
-                mode={mode}
+                planEnabled={planEnabled}
+                teamEnabled={teamEnabled}
                 disabled={submitting}
-                onModeChange={setMode}
+                onFlagsChange={handleFlagsChange}
               />
             }
           />

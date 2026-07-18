@@ -8,16 +8,12 @@ import {
   type CSSProperties,
 } from "react";
 import { ASSISTANT_PLACEHOLDER } from "@isotope/application/placeholder";
-import type {
-  Message,
-  Project,
-  ProjectMode,
-  Task,
-  TaskStatus,
-} from "@isotope/workspace";
+import type { Message, Project, Task, TaskStatus } from "@isotope/workspace";
 import { agentRoleLabel } from "@/components/agent-identity";
 import { MarkdownBody } from "@/components/markdown-body";
 import { Composer } from "@/components/composer";
+import { ComposerModeChips } from "@/components/composer-mode-chips";
+import { ComposerModeMenu } from "@/components/composer-mode-menu";
 import { EmptyState } from "@/components/empty-state";
 import { PanelHeader } from "@/components/panel-header";
 import { StatusBadge } from "@/components/status-badge";
@@ -29,7 +25,6 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { WorkspaceEditorPane } from "@/components/workspace-editor-pane";
-import { ComposerModeMenu } from "@/components/composer-mode-menu";
 import { cn } from "@/lib/utils";
 
 const DEFAULT_CHAT_PCT = 33.333;
@@ -62,6 +57,14 @@ function clampChatPct(value: number) {
   return Math.min(MAX_CHAT_PCT, Math.max(MIN_CHAT_PCT, value));
 }
 
+type StreamDoneData = {
+  messageId: string;
+  filesChanged: boolean;
+  previewEnqueued: boolean;
+  planConfirmed?: boolean;
+  nextTurn?: "engineer" | "team";
+};
+
 type StreamHandlers = {
   onStatus?: (phase: "thinking" | "running" | "streaming") => void;
   onThinking?: (text: string) => void;
@@ -74,15 +77,25 @@ type StreamHandlers = {
     assignee: string;
   }) => void;
   onToken: (text: string) => void;
-  onDone: (data: {
-    messageId: string;
-    filesChanged: boolean;
-    previewEnqueued: boolean;
-  }) => void;
+  onDone: (data: StreamDoneData) => void;
   onError: (message: string) => void;
   /** Stream ended without a terminal event (or fetch threw). Prefer over onError for transport. */
   onTransportDisconnect?: () => void;
 };
+
+type StreamBody =
+  | { action: "continue" }
+  | { action: "send"; content: string; silentHandoff?: boolean };
+
+function resolvePlaceholderAgent(flags: {
+  planEnabled: boolean;
+  teamEnabled: boolean;
+  planConfirmed: boolean;
+}): string {
+  if (flags.planEnabled && !flags.planConfirmed) return "Pat";
+  if (flags.teamEnabled) return "Mike";
+  return "Alex";
+}
 
 type ContinueFlight = {
   handlers: StreamHandlers;
@@ -162,9 +175,10 @@ function signalTransportDisconnect(handlers: StreamHandlers): void {
 
 async function consumeEngineerStream(
   projectId: string,
-  body: { action: "continue" } | { action: "send"; content: string },
+  body: StreamBody,
   handlers: StreamHandlers,
-): Promise<void> {
+  options?: { quietConflict?: boolean },
+): Promise<"ok" | "conflict" | "failed"> {
   let terminal = false;
   let openedContinueSse = false;
   try {
@@ -176,17 +190,19 @@ async function consumeEngineerStream(
     if (res.status === 409) {
       // Duplicate continue while this page already owns the stream — no-op.
       if (body.action === "continue" && continueSseOpen.has(projectId)) {
-        return;
+        return "ok";
       }
-      handlers.onError("回合进行中，请稍候");
-      return;
+      if (!options?.quietConflict) {
+        handlers.onError("回合进行中，请稍候");
+      }
+      return "conflict";
     }
     if (!res.ok || !res.body) {
       const data = await res.json().catch(() => null);
       handlers.onError(
         typeof data?.error === "string" ? data.error : "请求失败",
       );
-      return;
+      return "failed";
     }
     if (body.action === "continue") {
       continueSseOpen.add(projectId);
@@ -215,7 +231,7 @@ async function consumeEngineerStream(
           data = JSON.parse(dataLine) as Record<string, unknown>;
         } catch {
           signalTransportDisconnect(handlers);
-          return;
+          return "failed";
         }
         if (
           event === "status" &&
@@ -266,13 +282,16 @@ async function consumeEngineerStream(
           handlers.onToken(data.text);
         } else if (event === "done") {
           terminal = true;
-          handlers.onDone(
-            data as {
-              messageId: string;
-              filesChanged: boolean;
-              previewEnqueued: boolean;
-            },
-          );
+          const done: StreamDoneData = {
+            messageId: String(data.messageId ?? ""),
+            filesChanged: Boolean(data.filesChanged),
+            previewEnqueued: Boolean(data.previewEnqueued),
+            ...(data.planConfirmed === true ? { planConfirmed: true } : {}),
+            ...(data.nextTurn === "engineer" || data.nextTurn === "team"
+              ? { nextTurn: data.nextTurn }
+              : {}),
+          };
+          handlers.onDone(done);
         } else if (event === "error") {
           terminal = true;
           handlers.onError(String(data.message ?? "生成失败"));
@@ -281,9 +300,12 @@ async function consumeEngineerStream(
     }
     if (!terminal) {
       signalTransportDisconnect(handlers);
+      return "failed";
     }
+    return "ok";
   } catch {
     signalTransportDisconnect(handlers);
+    return "failed";
   } finally {
     if (openedContinueSse) continueSseOpen.delete(projectId);
   }
@@ -301,7 +323,10 @@ export function WorkbenchShell({
   const [submitting, setSubmitting] = useState(false);
   const [agentStatus, setAgentStatus] = useState<AgentStatus>("idle");
   const [error, setError] = useState<string | null>(null);
-  const [mode, setMode] = useState<ProjectMode>(project.mode);
+  const [handoffTip, setHandoffTip] = useState<string | null>(null);
+  const [planEnabled, setPlanEnabled] = useState(project.planEnabled);
+  const [teamEnabled, setTeamEnabled] = useState(project.teamEnabled);
+  const [planConfirmed, setPlanConfirmed] = useState(project.planConfirmed);
   const [tasks, setTasks] = useState<Record<string, Task>>({});
   const [chatPct, setChatPct] = useState(DEFAULT_CHAT_PCT);
   const [dragging, setDragging] = useState(false);
@@ -313,6 +338,9 @@ export function WorkbenchShell({
   const reconnectAttemptRef = useRef(0);
   const continueStartProcessRef = useRef<Message["process"]>(undefined);
   const currentAssistantIdRef = useRef<string | null>(null);
+  const teamEnabledRef = useRef(teamEnabled);
+  teamEnabledRef.current = teamEnabled;
+  const startSilentHandoffRef = useRef<() => void>(() => {});
 
   useEffect(() => {
     try {
@@ -668,6 +696,13 @@ export function WorkbenchShell({
         setSubmitting(false);
         continueInFlightRef.current = false;
         if (data.previewEnqueued) void fetchPreview(false);
+        if (data.planConfirmed && data.nextTurn) {
+          setPlanEnabled(false);
+          setPlanConfirmed(true);
+          queueMicrotask(() => {
+            startSilentHandoffRef.current();
+          });
+        }
       },
       onError: (message) => {
         setError(message);
@@ -781,19 +816,26 @@ export function WorkbenchShell({
     await fetchPreview(false);
   }
 
-  async function handleModeChange(next: string) {
-    if (next !== "engineer" && next !== "team") return;
-    const prev = mode;
-    setMode(next);
+  async function handleFlagsChange(next: {
+    planEnabled: boolean;
+    teamEnabled: boolean;
+  }) {
+    const prev = { planEnabled, teamEnabled };
+    setPlanEnabled(next.planEnabled);
+    setTeamEnabled(next.teamEnabled);
     setError(null);
     try {
       const res = await fetch(`/api/projects/${project.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode: next }),
+        body: JSON.stringify({
+          planEnabled: next.planEnabled,
+          teamEnabled: next.teamEnabled,
+        }),
       });
       if (!res.ok) {
-        setMode(prev);
+        setPlanEnabled(prev.planEnabled);
+        setTeamEnabled(prev.teamEnabled);
         const data = (await res.json().catch(() => null)) as {
           error?: string;
         } | null;
@@ -802,9 +844,144 @@ export function WorkbenchShell({
         );
       }
     } catch {
-      setMode(prev);
+      setPlanEnabled(prev.planEnabled);
+      setTeamEnabled(prev.teamEnabled);
       setError("切换模式失败");
     }
+  }
+
+  const buildLiveHandlers = useCallback(
+    (opts?: {
+      onDoneExtra?: (data: StreamDoneData) => void;
+    }): StreamHandlers => ({
+      onStatus: (phase) => {
+        setAgentStatus(phase);
+      },
+      onSpeaker: (data) => {
+        applySpeaker(data);
+      },
+      onTask: (data) => {
+        applyTaskEvent(data);
+      },
+      onThinking: (text) => {
+        const id = currentAssistantIdRef.current;
+        if (!id) return;
+        setMessages((prev) =>
+          updateMessageById(prev, id, (m) => mergeThinking(m, text)),
+        );
+      },
+      onTool: (ev) => {
+        const id = currentAssistantIdRef.current;
+        if (!id) return;
+        setMessages((prev) =>
+          updateMessageById(prev, id, (m) => applyToolStep(m, ev)),
+        );
+      },
+      onToken: (text) => {
+        const id = currentAssistantIdRef.current;
+        if (!id) return;
+        setMessages((prev) =>
+          updateMessageById(prev, id, (m) => ({
+            ...m,
+            content: (m.content ?? "") + text,
+          })),
+        );
+      },
+      onDone: (data) => {
+        const id = currentAssistantIdRef.current;
+        if (id) {
+          setMessages((prev) =>
+            updateMessageById(prev, id, (m) => ({
+              ...m,
+              id: data.messageId,
+            })),
+          );
+          currentAssistantIdRef.current = data.messageId;
+        }
+        setAgentStatus("idle");
+        setSubmitting(false);
+        if (data.previewEnqueued) void fetchPreview(false);
+        opts?.onDoneExtra?.(data);
+      },
+      onError: (message) => {
+        setError(message);
+        const transport = message.includes("连接中断");
+        if (!transport) {
+          const id = currentAssistantIdRef.current;
+          if (id) {
+            setMessages((prev) =>
+              updateMessageById(prev, id, (m) => ({
+                ...m,
+                content: m.content || message,
+              })),
+            );
+          }
+        }
+        setAgentStatus("idle");
+        setSubmitting(false);
+      },
+      onTransportDisconnect: () => {
+        setError("连接中断，请重试");
+        setAgentStatus("idle");
+        setSubmitting(false);
+      },
+    }),
+    [applySpeaker, applyTaskEvent, fetchPreview],
+  );
+
+  const startSilentHandoff = useCallback(() => {
+    setHandoffTip(null);
+    setError(null);
+    setSubmitting(true);
+    setAgentStatus("thinking");
+    const tempAsstId = `local_asst_${Date.now()}`;
+    const agentName = teamEnabledRef.current ? "Mike" : "Alex";
+    currentAssistantIdRef.current = tempAsstId;
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: tempAsstId,
+        projectId: project.id,
+        role: "assistant" as const,
+        content: "",
+        createdAt: new Date().toISOString(),
+        agentName,
+      },
+    ]);
+
+    const handlers = buildLiveHandlers();
+
+    void (async () => {
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        const result = await consumeEngineerStream(
+          project.id,
+          { action: "send", content: "", silentHandoff: true },
+          handlers,
+          { quietConflict: true },
+        );
+        if (result === "conflict") {
+          await new Promise((r) => setTimeout(r, 350 * (attempt + 1)));
+          continue;
+        }
+        return;
+      }
+      setMessages((prev) => prev.filter((m) => m.id !== tempAsstId));
+      currentAssistantIdRef.current = null;
+      setHandoffTip("可再发送一条消息继续");
+      setAgentStatus("idle");
+      setSubmitting(false);
+    })();
+  }, [buildLiveHandlers, project.id]);
+
+  startSilentHandoffRef.current = startSilentHandoff;
+
+  function maybeStartSilentHandoff(data: StreamDoneData) {
+    if (!(data.planConfirmed && data.nextTurn)) return;
+    setPlanEnabled(false);
+    setPlanConfirmed(true);
+    queueMicrotask(() => {
+      startSilentHandoffRef.current();
+    });
   }
 
   async function handleSend() {
@@ -813,6 +990,7 @@ export function WorkbenchShell({
     setSubmitting(true);
     setAgentStatus("thinking");
     setError(null);
+    setHandoffTip(null);
     setDraft("");
     const tempUser = {
       id: `local_user_${Date.now()}`,
@@ -828,7 +1006,11 @@ export function WorkbenchShell({
       role: "assistant" as const,
       content: "",
       createdAt: new Date().toISOString(),
-      agentName: mode === "team" ? "Mike" : "Alex",
+      agentName: resolvePlaceholderAgent({
+        planEnabled,
+        teamEnabled,
+        planConfirmed,
+      }),
     };
     currentAssistantIdRef.current = tempAsstId;
     setMessages((prev) => [...prev, tempUser, tempAssistant]);
@@ -836,78 +1018,9 @@ export function WorkbenchShell({
     await consumeEngineerStream(
       project.id,
       { action: "send", content },
-      {
-        onStatus: (phase) => {
-          setAgentStatus(phase);
-        },
-        onSpeaker: (data) => {
-          applySpeaker(data);
-        },
-        onTask: (data) => {
-          applyTaskEvent(data);
-        },
-        onThinking: (text) => {
-          const id = currentAssistantIdRef.current;
-          if (!id) return;
-          setMessages((prev) =>
-            updateMessageById(prev, id, (m) => mergeThinking(m, text)),
-          );
-        },
-        onTool: (ev) => {
-          const id = currentAssistantIdRef.current;
-          if (!id) return;
-          setMessages((prev) =>
-            updateMessageById(prev, id, (m) => applyToolStep(m, ev)),
-          );
-        },
-        onToken: (text) => {
-          const id = currentAssistantIdRef.current;
-          if (!id) return;
-          setMessages((prev) =>
-            updateMessageById(prev, id, (m) => ({
-              ...m,
-              content: (m.content ?? "") + text,
-            })),
-          );
-        },
-        onDone: (data) => {
-          const id = currentAssistantIdRef.current;
-          if (id) {
-            setMessages((prev) =>
-              updateMessageById(prev, id, (m) => ({
-                ...m,
-                id: data.messageId,
-              })),
-            );
-            currentAssistantIdRef.current = data.messageId;
-          }
-          setAgentStatus("idle");
-          setSubmitting(false);
-          if (data.previewEnqueued) void fetchPreview(false);
-        },
-        onError: (message) => {
-          setError(message);
-          const transport = message.includes("连接中断");
-          if (!transport) {
-            const id = currentAssistantIdRef.current;
-            if (id) {
-              setMessages((prev) =>
-                updateMessageById(prev, id, (m) => ({
-                  ...m,
-                  content: m.content || message,
-                })),
-              );
-            }
-          }
-          setAgentStatus("idle");
-          setSubmitting(false);
-        },
-        onTransportDisconnect: () => {
-          setError("连接中断，请重试");
-          setAgentStatus("idle");
-          setSubmitting(false);
-        },
-      },
+      buildLiveHandlers({
+        onDoneExtra: maybeStartSilentHandoff,
+      }),
     );
   }
 
@@ -968,6 +1081,11 @@ export function WorkbenchShell({
                 {error}
               </p>
             ) : null}
+            {handoffTip ? (
+              <p className="text-sm text-muted-foreground" role="status">
+                {handoffTip}
+              </p>
+            ) : null}
             <Composer
               value={draft}
               onChange={setDraft}
@@ -975,12 +1093,23 @@ export function WorkbenchShell({
               placeholder="输入消息…"
               submitting={submitting}
               submitLabel="发送"
+              chips={
+                <ComposerModeChips
+                  planEnabled={planEnabled}
+                  teamEnabled={teamEnabled}
+                  disabled={submitting}
+                  onFlagsChange={(next) => {
+                    void handleFlagsChange(next);
+                  }}
+                />
+              }
               toolbar={
                 <ComposerModeMenu
-                  mode={mode}
+                  planEnabled={planEnabled}
+                  teamEnabled={teamEnabled}
                   disabled={submitting}
-                  onModeChange={(next) => {
-                    void handleModeChange(next);
+                  onFlagsChange={(next) => {
+                    void handleFlagsChange(next);
                   }}
                 />
               }
