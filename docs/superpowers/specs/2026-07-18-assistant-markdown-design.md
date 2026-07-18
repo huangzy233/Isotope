@@ -1,7 +1,7 @@
 # 设计：助手消息 Markdown 渲染
 
 - 日期：2026-07-18
-- 状态：已批准（用户确认范围与方案 → 待写实现计划）
+- 状态：已落地（实现计划已执行：MarkdownBody + MessageRow 接入）
 - 前置：工作台消息时间线已落地（`MessageRow` 纯文本 `whitespace-pre-wrap`）
 - 范围：仅助手消息**结论正文**渲染 GFM Markdown；用户消息与思考过程仍为纯文本
 - UI：遵循 `docs/ui/`（尤其 `ai-surfaces.md`）；Neutral Tool + token class；不引入 `@tailwindcss/typography`
