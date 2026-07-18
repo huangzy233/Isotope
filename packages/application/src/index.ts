@@ -32,6 +32,14 @@ export {
 } from "./projects/task-event-bus.js";
 export { startTaskWatchdog } from "./projects/task-watchdog.js";
 export { isTurnLocked } from "./projects/turn-lock.js";
+export {
+  destroyTurnHub,
+  ensureTurnHub,
+  isTurnHubActive,
+  publishTurnEvent,
+  subscribeTurn,
+  type TurnHubListener,
+} from "./projects/turn-hub.js";
 export { updateProjectMode } from "./projects/update-project-mode.js";
 export { listTasks } from "./projects/list-tasks.js";
 export { listWorkspaceSourceFiles } from "./projects/list-workspace-source-files.js";
