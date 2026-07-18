@@ -338,9 +338,9 @@ export function WorkbenchShell({
   const reconnectAttemptRef = useRef(0);
   const continueStartProcessRef = useRef<Message["process"]>(undefined);
   const currentAssistantIdRef = useRef<string | null>(null);
-  const teamEnabledRef = useRef(teamEnabled);
-  teamEnabledRef.current = teamEnabled;
-  const startSilentHandoffRef = useRef<() => void>(() => {});
+  const startSilentHandoffRef = useRef<
+    (nextTurn: "engineer" | "team") => void
+  >(() => {});
 
   useEffect(() => {
     try {
@@ -700,7 +700,7 @@ export function WorkbenchShell({
           setPlanEnabled(false);
           setPlanConfirmed(true);
           queueMicrotask(() => {
-            startSilentHandoffRef.current();
+            startSilentHandoffRef.current(data.nextTurn!);
           });
         }
       },
@@ -929,13 +929,13 @@ export function WorkbenchShell({
     [applySpeaker, applyTaskEvent, fetchPreview],
   );
 
-  const startSilentHandoff = useCallback(() => {
+  const startSilentHandoff = useCallback((nextTurn: "engineer" | "team") => {
     setHandoffTip(null);
     setError(null);
     setSubmitting(true);
     setAgentStatus("thinking");
     const tempAsstId = `local_asst_${Date.now()}`;
-    const agentName = teamEnabledRef.current ? "Mike" : "Alex";
+    const agentName = nextTurn === "team" ? "Mike" : "Alex";
     currentAssistantIdRef.current = tempAsstId;
     setMessages((prev) => [
       ...prev,
@@ -980,7 +980,7 @@ export function WorkbenchShell({
     setPlanEnabled(false);
     setPlanConfirmed(true);
     queueMicrotask(() => {
-      startSilentHandoffRef.current();
+      startSilentHandoffRef.current(data.nextTurn!);
     });
   }
 
