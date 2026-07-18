@@ -15,3 +15,5 @@ data/projects/**
 !data/projects/.gitkeep
 data/**/node_modules
 data/**/build
+data/*.sqlite
+data/*.sqlite-*

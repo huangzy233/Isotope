@@ -1,7 +1,13 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  transpilePackages: ["@isotope/application", "@isotope/identity", "@isotope/kernel"],
+  transpilePackages: [
+    "@isotope/application",
+    "@isotope/identity",
+    "@isotope/kernel",
+    "@isotope/workspace",
+  ],
+  serverExternalPackages: ["better-sqlite3"],
   webpack: (config) => {
     config.resolve.extensionAlias = {
       ...config.resolve.extensionAlias,

@@ -1,6 +1,8 @@
-import { redirect } from "next/navigation";
-import { AppHeader } from "@/components/app-header";
+import { listProjects } from "@isotope/application";
+import { AppShell } from "@/components/app-shell";
 import { readSession } from "@/lib/auth";
+import { getWorkspace } from "@/lib/workspace";
+import { redirect } from "next/navigation";
 
 export default async function AppLayout({
   children,
@@ -12,10 +14,19 @@ export default async function AppLayout({
     redirect("/login");
   }
 
+  const projects = listProjects(
+    { ownerUserId: session.username },
+    getWorkspace(),
+  ).map((p) => ({
+    id: p.id,
+    name: p.name,
+    mode: p.mode,
+    updatedAt: p.updatedAt,
+  }));
+
   return (
-    <div className="flex min-h-screen flex-col bg-background">
-      <AppHeader username={session.username} />
-      <div className="flex flex-1 flex-col">{children}</div>
-    </div>
+    <AppShell username={session.username} projects={projects}>
+      {children}
+    </AppShell>
   );
 }

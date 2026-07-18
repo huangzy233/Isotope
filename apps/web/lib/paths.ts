@@ -7,3 +7,11 @@ export function monorepoRoot(): string {
 export function demoUsersConfigPath(): string {
   return path.join(monorepoRoot(), "configs/app/demo-users.yaml");
 }
+
+export function dataRoot(): string {
+  return path.join(monorepoRoot(), "data");
+}
+
+export function templatePath(): string {
+  return path.join(monorepoRoot(), "templates/vite-react");
+}
