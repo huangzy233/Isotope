@@ -3,6 +3,8 @@ import {
   beginEngineerTurn,
   beginTeamTurn,
   getProject,
+  isTurnHubActive,
+  subscribeTurn,
   type EngineerTurnEvent,
   type TeamTurnEvent,
 } from "@isotope/application";
@@ -17,14 +19,10 @@ export const dynamic = "force-dynamic";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
-function sendSse(
-  controller: ReadableStreamDefaultController<Uint8Array>,
-  encoder: TextEncoder,
-  event: string,
-  data: unknown,
-) {
-  controller.enqueue(
-    encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`),
+function isClosedControllerError(err: unknown): boolean {
+  return (
+    err instanceof Error &&
+    /Controller is already closed|Invalid state/i.test(err.message)
   );
 }
 
@@ -76,6 +74,59 @@ function forwardTurnEvent(
   }
 }
 
+function openTurnSse(projectId: string): Response {
+  const encoder = new TextEncoder();
+  let unsub: (() => void) | null = null;
+  const stream = new ReadableStream({
+    start(controller) {
+      const send = (event: string, data: unknown) => {
+        try {
+          controller.enqueue(
+            encoder.encode(
+              `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`,
+            ),
+          );
+        } catch (err) {
+          if (isClosedControllerError(err)) {
+            unsub?.();
+            unsub = null;
+            return;
+          }
+          throw err;
+        }
+      };
+      unsub = subscribeTurn(projectId, (ev) => {
+        forwardTurnEvent(send, ev as EngineerTurnEvent | TeamTurnEvent);
+        const type = (ev as { type?: string }).type;
+        if (type === "done" || type === "error") {
+          unsub?.();
+          unsub = null;
+          try {
+            controller.close();
+          } catch {
+            /* already closed */
+          }
+        }
+      });
+      if (!unsub) {
+        send("error", { message: "回合不存在或已结束" });
+        controller.close();
+      }
+    },
+    cancel() {
+      unsub?.();
+      unsub = null;
+    },
+  });
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+    },
+  });
+}
+
 export async function POST(request: Request, context: RouteContext) {
   const session = await readSession();
   if (!session) {
@@ -103,6 +154,14 @@ export async function POST(request: Request, context: RouteContext) {
   );
   if (!project) {
     return Response.json({ error: "项目不存在" }, { status: 404 });
+  }
+
+  if (body.action === "continue" && isTurnHubActive(id)) {
+    return openTurnSse(id);
+  }
+
+  if (body.action === "send" && isTurnHubActive(id)) {
+    return Response.json({ error: "回合进行中" }, { status: 409 });
   }
 
   const turnInput =
@@ -191,24 +250,6 @@ export async function POST(request: Request, context: RouteContext) {
     return Response.json({ error }, { status });
   }
 
-  const encoder = new TextEncoder();
-  const stream = new ReadableStream({
-    async start(controller) {
-      const send = (event: string, data: unknown) =>
-        sendSse(controller, encoder, event, data);
-      try {
-        await begun.run((ev) => forwardTurnEvent(send, ev));
-      } finally {
-        controller.close();
-      }
-    },
-  });
-
-  return new Response(stream, {
-    headers: {
-      "Content-Type": "text/event-stream; charset=utf-8",
-      "Cache-Control": "no-cache, no-transform",
-      Connection: "keep-alive",
-    },
-  });
+  void begun.run();
+  return openTurnSse(id);
 }
