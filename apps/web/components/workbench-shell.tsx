@@ -8,15 +8,24 @@ import {
   type CSSProperties,
 } from "react";
 import { ASSISTANT_PLACEHOLDER } from "@isotope/application/placeholder";
-import type { Message, Project } from "@isotope/workspace";
+import type {
+  Message,
+  Project,
+  ProjectMode,
+  Task,
+  TaskStatus,
+} from "@isotope/workspace";
+import { agentRoleLabel } from "@/components/agent-identity";
 import { Composer } from "@/components/composer";
 import { EmptyState } from "@/components/empty-state";
 import { PanelHeader } from "@/components/panel-header";
 import { StatusBadge } from "@/components/status-badge";
+import { TaskCard } from "@/components/task-card";
 import { CheckCircle2, ChevronUp } from "lucide-react";
 import { ToolCallGroup } from "@/components/tool-call-row";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 
 const DEFAULT_CHAT_PCT = 33.333;
@@ -49,6 +58,13 @@ type StreamHandlers = {
   onStatus?: (phase: "thinking" | "running" | "streaming") => void;
   onThinking?: (text: string) => void;
   onTool?: (ev: ToolStreamEvent) => void;
+  onSpeaker?: (data: { agentName: string; messageId: string }) => void;
+  onTask?: (data: {
+    taskId: string;
+    status: TaskStatus;
+    title: string;
+    assignee: string;
+  }) => void;
   onToken: (text: string) => void;
   onDone: (data: {
     messageId: string;
@@ -59,17 +75,21 @@ type StreamHandlers = {
 };
 
 /** Strict Mode remount: first continue owns the SSE; later mounts rebind handlers. */
-const continueFlightByProject = new Map<string, { handlers: StreamHandlers }>();
+const continueFlightByProject = new Map<
+  string,
+  { handlers: StreamHandlers; currentMessageId: string }
+>();
 /** Projects with an open continue SSE body (409 from a duplicate continue is ignored). */
 const continueSseOpen = new Set<string>();
 
-function updateLastAssistant(
+function updateMessageById(
   prev: Message[],
+  messageId: string,
   updater: (msg: Message) => Message,
 ): Message[] {
+  const i = prev.findIndex((m) => m.id === messageId);
+  if (i < 0) return prev;
   const copy = [...prev];
-  const i = copy.length - 1;
-  if (!copy[i] || copy[i]!.role !== "assistant") return prev;
   copy[i] = updater(copy[i]!);
   return copy;
 }
@@ -200,6 +220,28 @@ async function consumeEngineerStream(
               typeof data.summary === "string" ? data.summary : undefined,
             ok: typeof data.ok === "boolean" ? data.ok : undefined,
           });
+        } else if (
+          event === "speaker" &&
+          typeof data.agentName === "string" &&
+          typeof data.messageId === "string"
+        ) {
+          handlers.onSpeaker?.({
+            agentName: data.agentName,
+            messageId: data.messageId,
+          });
+        } else if (
+          event === "task" &&
+          typeof data.taskId === "string" &&
+          typeof data.status === "string" &&
+          typeof data.title === "string" &&
+          typeof data.assignee === "string"
+        ) {
+          handlers.onTask?.({
+            taskId: data.taskId,
+            status: data.status as TaskStatus,
+            title: data.title,
+            assignee: data.assignee,
+          });
         } else if (event === "token" && typeof data.text === "string") {
           handlers.onToken(data.text);
         } else if (event === "done") {
@@ -239,12 +281,15 @@ export function WorkbenchShell({
   const [submitting, setSubmitting] = useState(false);
   const [agentStatus, setAgentStatus] = useState<AgentStatus>("idle");
   const [error, setError] = useState<string | null>(null);
+  const [mode, setMode] = useState<ProjectMode>(project.mode);
+  const [tasks, setTasks] = useState<Record<string, Task>>({});
   const [chatPct, setChatPct] = useState(DEFAULT_CHAT_PCT);
   const [dragging, setDragging] = useState(false);
   const [preview, setPreview] = useState<PreviewSnapshot | null>(null);
   const splitRef = useRef<HTMLDivElement>(null);
   const continuedRef = useRef(false);
   const continueInFlightRef = useRef(false);
+  const currentAssistantIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     try {
@@ -258,6 +303,113 @@ export function WorkbenchShell({
       // ignore storage errors
     }
   }, []);
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const res = await fetch(`/api/projects/${project.id}/tasks`);
+        const data = (await res.json().catch(() => null)) as {
+          tasks?: Task[];
+        } | null;
+        if (!res.ok || !Array.isArray(data?.tasks)) return;
+        const map: Record<string, Task> = {};
+        for (const task of data.tasks) {
+          map[task.id] = task;
+        }
+        setTasks(map);
+      } catch {
+        // keep empty map on network errors
+      }
+    })();
+  }, [project.id]);
+
+  const applySpeaker = useCallback(
+    (data: { agentName: string; messageId: string }) => {
+      const prevId = currentAssistantIdRef.current;
+      setMessages((prev) => {
+        const current = prevId
+          ? prev.find((m) => m.id === prevId)
+          : undefined;
+        if (
+          current &&
+          current.agentName &&
+          current.agentName !== data.agentName
+        ) {
+          return [
+            ...prev,
+            {
+              id: data.messageId,
+              projectId: project.id,
+              role: "assistant" as const,
+              content: "",
+              createdAt: new Date().toISOString(),
+              agentName: data.agentName,
+            },
+          ];
+        }
+        if (prevId && prevId !== data.messageId) {
+          return updateMessageById(prev, prevId, (m) => ({
+            ...m,
+            id: data.messageId,
+            agentName: data.agentName,
+          }));
+        }
+        if (prevId) {
+          return updateMessageById(prev, prevId, (m) => ({
+            ...m,
+            agentName: data.agentName,
+          }));
+        }
+        return prev;
+      });
+      currentAssistantIdRef.current = data.messageId;
+      const flight = continueFlightByProject.get(project.id);
+      if (flight) flight.currentMessageId = data.messageId;
+    },
+    [project.id],
+  );
+
+  const applyTaskEvent = useCallback(
+    (data: {
+      taskId: string;
+      status: TaskStatus;
+      title: string;
+      assignee: string;
+    }) => {
+      setTasks((prev) => {
+        const existing = prev[data.taskId];
+        return {
+          ...prev,
+          [data.taskId]: {
+            id: data.taskId,
+            projectId: existing?.projectId ?? project.id,
+            title: data.title,
+            assignee: data.assignee as Task["assignee"],
+            status: data.status,
+            createdByMessageId: existing?.createdByMessageId,
+            assigneeMessageId: existing?.assigneeMessageId,
+            createdAt: existing?.createdAt ?? new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            lastProgressAt: new Date().toISOString(),
+          },
+        };
+      });
+      setMessages((prev) => {
+        const copy = [...prev];
+        for (let i = copy.length - 1; i >= 0; i -= 1) {
+          if (
+            copy[i]!.role === "assistant" &&
+            copy[i]!.agentName === "Mike"
+          ) {
+            copy[i] = { ...copy[i]!, taskId: data.taskId };
+            break;
+          }
+        }
+        return copy;
+      });
+    },
+    [project.id],
+  );
 
   const persistChatPct = useCallback((value: number) => {
     const next = clampChatPct(value);
@@ -355,6 +507,7 @@ export function WorkbenchShell({
     }
     continuedRef.current = true;
     continueInFlightRef.current = true;
+    currentAssistantIdRef.current = last.id;
     setSubmitting(true);
     setAgentStatus("thinking");
     setMessages((prev) => {
@@ -368,34 +521,47 @@ export function WorkbenchShell({
       onStatus: (phase) => {
         setAgentStatus(phase);
       },
+      onSpeaker: (data) => {
+        applySpeaker(data);
+      },
+      onTask: (data) => {
+        applyTaskEvent(data);
+      },
       onThinking: (text) => {
+        const id = currentAssistantIdRef.current;
+        if (!id) return;
         setMessages((prev) =>
-          updateLastAssistant(prev, (m) => mergeThinking(m, text)),
+          updateMessageById(prev, id, (m) => mergeThinking(m, text)),
         );
       },
       onTool: (ev) => {
+        const id = currentAssistantIdRef.current;
+        if (!id) return;
         setMessages((prev) =>
-          updateLastAssistant(prev, (m) => applyToolStep(m, ev)),
+          updateMessageById(prev, id, (m) => applyToolStep(m, ev)),
         );
       },
       onToken: (text) => {
-        setMessages((prev) => {
-          const copy = [...prev];
-          const i = copy.length - 1;
-          copy[i] = {
-            ...copy[i]!,
-            content: (copy[i]?.content ?? "") + text,
-          };
-          return copy;
-        });
+        const id = currentAssistantIdRef.current;
+        if (!id) return;
+        setMessages((prev) =>
+          updateMessageById(prev, id, (m) => ({
+            ...m,
+            content: (m.content ?? "") + text,
+          })),
+        );
       },
       onDone: (data) => {
-        setMessages((prev) => {
-          const copy = [...prev];
-          const i = copy.length - 1;
-          copy[i] = { ...copy[i]!, id: data.messageId };
-          return copy;
-        });
+        const id = currentAssistantIdRef.current;
+        if (id) {
+          setMessages((prev) =>
+            updateMessageById(prev, id, (m) => ({
+              ...m,
+              id: data.messageId,
+            })),
+          );
+          currentAssistantIdRef.current = data.messageId;
+        }
         setAgentStatus("idle");
         setSubmitting(false);
         continueInFlightRef.current = false;
@@ -403,20 +569,20 @@ export function WorkbenchShell({
       },
       onError: (message) => {
         setError(message);
-        setMessages((prev) => {
-          const copy = [...prev];
-          const i = copy.length - 1;
-          if (copy[i]) {
-            const cur = copy[i]!.content;
-            const emptyOrPlaceholder =
-              !cur || cur === ASSISTANT_PLACEHOLDER;
-            copy[i] = {
-              ...copy[i]!,
-              content: emptyOrPlaceholder ? message : cur,
-            };
-          }
-          return copy;
-        });
+        const id = currentAssistantIdRef.current;
+        if (id) {
+          setMessages((prev) =>
+            updateMessageById(prev, id, (m) => {
+              const cur = m.content;
+              const emptyOrPlaceholder =
+                !cur || cur === ASSISTANT_PLACEHOLDER;
+              return {
+                ...m,
+                content: emptyOrPlaceholder ? message : cur,
+              };
+            }),
+          );
+        }
         setAgentStatus("idle");
         setSubmitting(false);
         continueInFlightRef.current = false;
@@ -427,13 +593,21 @@ export function WorkbenchShell({
     if (existing) {
       // Strict Mode remount: adopt in-flight stream; do not start a second continue.
       existing.handlers = handlers;
+      currentAssistantIdRef.current = existing.currentMessageId;
       return;
     }
 
-    continueFlightByProject.set(project.id, { handlers });
+    continueFlightByProject.set(project.id, {
+      handlers,
+      currentMessageId: last.id,
+    });
     void consumeEngineerStream(project.id, { action: "continue" }, {
       onStatus: (phase) =>
         continueFlightByProject.get(project.id)?.handlers.onStatus?.(phase),
+      onSpeaker: (data) =>
+        continueFlightByProject.get(project.id)?.handlers.onSpeaker?.(data),
+      onTask: (data) =>
+        continueFlightByProject.get(project.id)?.handlers.onTask?.(data),
       onThinking: (text) =>
         continueFlightByProject.get(project.id)?.handlers.onThinking?.(text),
       onTool: (ev) =>
@@ -451,13 +625,39 @@ export function WorkbenchShell({
     }).finally(() => {
       continueFlightByProject.delete(project.id);
     });
-  }, [project.id, initialMessages, fetchPreview]);
+  }, [project.id, initialMessages, fetchPreview, applySpeaker, applyTaskEvent]);
 
   async function handleRebuild() {
     await fetch(`/api/projects/${project.id}/preview/build`, {
       method: "POST",
     });
     await fetchPreview(false);
+  }
+
+  async function handleModeChange(next: string) {
+    if (next !== "engineer" && next !== "team") return;
+    const prev = mode;
+    setMode(next);
+    setError(null);
+    try {
+      const res = await fetch(`/api/projects/${project.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: next }),
+      });
+      if (!res.ok) {
+        setMode(prev);
+        const data = (await res.json().catch(() => null)) as {
+          error?: string;
+        } | null;
+        setError(
+          typeof data?.error === "string" ? data.error : "切换模式失败",
+        );
+      }
+    } catch {
+      setMode(prev);
+      setError("切换模式失败");
+    }
   }
 
   async function handleSend() {
@@ -474,14 +674,16 @@ export function WorkbenchShell({
       content,
       createdAt: new Date().toISOString(),
     };
+    const tempAsstId = `local_asst_${Date.now()}`;
     const tempAssistant = {
-      id: `local_asst_${Date.now()}`,
+      id: tempAsstId,
       projectId: project.id,
       role: "assistant" as const,
       content: "",
       createdAt: new Date().toISOString(),
-      agentName: "Alex",
+      agentName: mode === "team" ? "Mike" : "Alex",
     };
+    currentAssistantIdRef.current = tempAsstId;
     setMessages((prev) => [...prev, tempUser, tempAssistant]);
 
     await consumeEngineerStream(
@@ -491,53 +693,62 @@ export function WorkbenchShell({
         onStatus: (phase) => {
           setAgentStatus(phase);
         },
+        onSpeaker: (data) => {
+          applySpeaker(data);
+        },
+        onTask: (data) => {
+          applyTaskEvent(data);
+        },
         onThinking: (text) => {
+          const id = currentAssistantIdRef.current;
+          if (!id) return;
           setMessages((prev) =>
-            updateLastAssistant(prev, (m) => mergeThinking(m, text)),
+            updateMessageById(prev, id, (m) => mergeThinking(m, text)),
           );
         },
         onTool: (ev) => {
+          const id = currentAssistantIdRef.current;
+          if (!id) return;
           setMessages((prev) =>
-            updateLastAssistant(prev, (m) => applyToolStep(m, ev)),
+            updateMessageById(prev, id, (m) => applyToolStep(m, ev)),
           );
         },
         onToken: (text) => {
-          setMessages((prev) => {
-            const copy = [...prev];
-            const i = copy.length - 1;
-            copy[i] = {
-              ...copy[i]!,
-              content: (copy[i]?.content ?? "") + text,
-            };
-            return copy;
-          });
+          const id = currentAssistantIdRef.current;
+          if (!id) return;
+          setMessages((prev) =>
+            updateMessageById(prev, id, (m) => ({
+              ...m,
+              content: (m.content ?? "") + text,
+            })),
+          );
         },
         onDone: (data) => {
-          setMessages((prev) => {
-            const copy = [...prev];
-            copy[copy.length - 1] = {
-              ...copy[copy.length - 1]!,
-              id: data.messageId,
-            };
-            return copy;
-          });
+          const id = currentAssistantIdRef.current;
+          if (id) {
+            setMessages((prev) =>
+              updateMessageById(prev, id, (m) => ({
+                ...m,
+                id: data.messageId,
+              })),
+            );
+            currentAssistantIdRef.current = data.messageId;
+          }
           setAgentStatus("idle");
           setSubmitting(false);
           if (data.previewEnqueued) void fetchPreview(false);
         },
         onError: (message) => {
           setError(message);
-          setMessages((prev) => {
-            const copy = [...prev];
-            const i = copy.length - 1;
-            if (copy[i]?.role === "assistant") {
-              copy[i] = {
-                ...copy[i]!,
-                content: copy[i]!.content || message,
-              };
-            }
-            return copy;
-          });
+          const id = currentAssistantIdRef.current;
+          if (id) {
+            setMessages((prev) =>
+              updateMessageById(prev, id, (m) => ({
+                ...m,
+                content: m.content || message,
+              })),
+            );
+          }
           setAgentStatus("idle");
           setSubmitting(false);
         },
@@ -577,6 +788,9 @@ export function WorkbenchShell({
                   <MessageRow
                     key={message.id}
                     message={message}
+                    task={
+                      message.taskId ? tasks[message.taskId] : undefined
+                    }
                     thinkingOpen={
                       message.id === lastMessageId &&
                       message.role === "assistant" &&
@@ -606,6 +820,14 @@ export function WorkbenchShell({
               placeholder="输入消息…"
               submitting={submitting}
               submitLabel="发送"
+              toolbar={
+                <Tabs value={mode} onValueChange={handleModeChange}>
+                  <TabsList>
+                    <TabsTrigger value="engineer">Engineer</TabsTrigger>
+                    <TabsTrigger value="team">Team</TabsTrigger>
+                  </TabsList>
+                </Tabs>
+              }
             />
           </div>
         </section>
@@ -708,15 +930,23 @@ export function WorkbenchShell({
 
 function MessageRow({
   message,
+  task,
   thinkingOpen = false,
   showContentSkeleton = false,
 }: {
   message: Message;
+  task?: Task;
   thinkingOpen?: boolean;
   showContentSkeleton?: boolean;
 }) {
   const isUser = message.role === "user";
-  const label = isUser ? "你" : (message.agentName ?? "Alex");
+  const agentName = message.agentName ?? "Alex";
+  const role = agentRoleLabel(message.agentName);
+  const label = isUser
+    ? "你"
+    : role
+      ? `${agentName} | ${role}`
+      : agentName;
 
   if (isUser) {
     return (
@@ -737,6 +967,13 @@ function MessageRow({
     <li className="mr-8 flex flex-col items-start gap-1">
       <p className="text-xs text-muted-foreground">{label}</p>
       <div className="rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground">
+        {task ? (
+          <TaskCard
+            title={task.title}
+            assignee={task.assignee}
+            status={task.status}
+          />
+        ) : null}
         {stepCount > 0 ? (
           <details className="group mb-2" open={thinkingOpen}>
             <summary className="flex cursor-pointer list-none items-center gap-2 text-xs text-muted-foreground [&::-webkit-details-marker]:hidden">
