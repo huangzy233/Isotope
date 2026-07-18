@@ -36,6 +36,11 @@ export { updateProjectMode } from "./projects/update-project-mode.js";
 export { listTasks } from "./projects/list-tasks.js";
 export { listWorkspaceSourceFiles } from "./projects/list-workspace-source-files.js";
 export {
+  readWorkspaceSourceFile,
+  type WorkspaceSourceFileReadResult,
+  MAX_WORKSPACE_SOURCE_BYTES,
+} from "./projects/read-workspace-source-file.js";
+export {
   isNoisyWorkspacePath,
   NOISY_WORKSPACE_SEGMENTS,
 } from "./projects/workspace-source-noise.js";
