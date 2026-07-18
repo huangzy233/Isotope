@@ -190,7 +190,7 @@ Cookie 读写与 session 解析留在 `apps/web`；用例在 application。
 
 ### 8.3 UI 约束
 
-遵循 `docs/UI_GUIDE.md`：复用 Composer / EmptyState / PanelHeader / StatusBadge / shadcn；不自写 CSS 皮肤；本步可用简单消息行，不强制新建完整 `MessageItem`。
+遵循 `docs/ui/README.md`：复用 Composer / EmptyState / PanelHeader / StatusBadge / shadcn；不自写 CSS 皮肤；本步可用简单消息行，不强制新建完整 `MessageItem`。
 
 ## 9. 模板 `templates/vite-react`
 
@@ -235,4 +235,4 @@ Cookie 读写与 session 解析留在 `apps/web`；用例在 application。
 
 - 延续 `2026-07-18-web-login-shell-design.md` 的 identity/session 与页面壳。
 - 本步替换首页 mock `/projects/demo` 与空「我的项目」。
-- UI 视觉仍以 `2026-07-18-ui-design-system.md` / `UI_GUIDE.md` 为准。
+- UI 视觉仍以 `docs/ui/README.md`（Playbook）为准；历史决策见 `2026-07-18-ui-design-system.md`（归档）。

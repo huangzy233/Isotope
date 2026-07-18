@@ -18,7 +18,7 @@
 - 非 owner / 不存在：API 404；工作台删当前项目后 `router.push('/')`。
 - Dialog 确认文案：`确定删除「{name}」？此操作不可恢复。`
 - localStorage key：`isotope.sidebarCollapsed`（`"1"` / `"0"` 或 boolean JSON）。
-- 遵守 `docs/UI_GUIDE.md`：Neutral Tool；禁止自写 CSS 皮肤。
+- 遵守 `docs/ui/README.md`：Neutral Tool；禁止自写 CSS 皮肤。
 - **未经用户要求不要 git commit**（忽略下文 commit 步骤）。
 - 外科手术式：不重做 persistence 其它能力；不接 LLM/preview。
 

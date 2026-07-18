@@ -1,10 +1,12 @@
 # 设计：Isotope UI Design System（产品级界面指导）
 
-> **日常查阅请用：** [`docs/UI_GUIDE.md`](../../UI_GUIDE.md)（本文为设计决策原文；P0 壳层换肤已落地）。
+> **【归档 / 只读】** 日常查阅请用：**[`docs/ui/README.md`](../../ui/README.md)**（AI Native UI Design Playbook）。  
+> 本文为 2026-07-18 历史决策原文，不再作为日常维护入口。重组说明见 [`2026-07-18-ui-playbook-reorg-design.md`](./2026-07-18-ui-playbook-reorg-design.md)。  
+> `docs/UI_GUIDE.md` 已废止删除。
 
 - 日期：2026-07-18
-- 状态：已批准（对话确认：方案 A 文档优先 + Neutral Tool + shadcn/ui 唯一组件源）
-- 范围：UI 指导文档；P0 实现见 `docs/superpowers/plans/2026-07-18-ui-design-system-p0.md`
+- 状态：已归档（原批准：方案 A 文档优先 + Neutral Tool + shadcn/ui 唯一组件源；已被 `docs/ui/*` 取代）
+- 范围：历史 UI 指导决策；P0 实现见 `docs/superpowers/plans/2026-07-18-ui-design-system-p0.md`
 
 ## 1. 目标
 

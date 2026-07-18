@@ -43,7 +43,7 @@
 - 品牌与退出从顶栏下沉到侧栏；不再渲染全局 `AppHeader`。
 - 项目列表由 layout/壳经 `listProjects` 注入；创建/删除后 `router.refresh()`。
 - 依赖：`web` → `application` → `workspace`；UI 不写归属/删库规则。
-- UI：遵守 `docs/UI_GUIDE.md`（Neutral Tool、shadcn；缺则补 Dialog）。
+- UI：遵守 `docs/ui/README.md`（Neutral Tool、shadcn；缺则补 Dialog）。
 
 ## 5. 删除
 
