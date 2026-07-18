@@ -17,3 +17,4 @@ data/**/node_modules
 data/**/build
 data/*.sqlite
 data/*.sqlite-*
+.worktrees/
