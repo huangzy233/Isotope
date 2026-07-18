@@ -19,6 +19,13 @@ export {
   type EngineerTurnInput,
 } from "./projects/stream-engineer-turn.js";
 export {
+  beginPlanTurn,
+  type BeginPlanTurnResult,
+  type PlanTurnDeps,
+  type PlanTurnEvent,
+  type PlanTurnInput,
+} from "./projects/stream-plan-turn.js";
+export {
   beginTeamTurn,
   retryStuckAssignedTask,
   type BeginTeamTurnResult,
