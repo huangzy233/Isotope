@@ -1,5 +1,5 @@
-import type { CoderAgent, WorkspaceToolPort } from "@isotope/agents";
-import type { LlmClient } from "@isotope/llm";
+import type { WorkspaceToolPort } from "@isotope/agents";
+import type { LlmClient, LlmToolDefinition } from "@isotope/llm";
 
 export type TurnPhase = "thinking" | "running" | "streaming";
 
@@ -23,10 +23,21 @@ export type TurnProcessStep =
 
 export type TurnProcess = { steps: TurnProcessStep[] };
 
-export type RunTurnInput = {
+export type TurnAgent<TPort = unknown> = {
+  displayName: string;
+  systemPrompt: string;
+  tools: LlmToolDefinition[];
+  executeTool(
+    name: string,
+    argsJson: string,
+    port: TPort,
+  ): { ok: true; result: string } | { ok: false; error: string };
+};
+
+export type RunTurnInput<TPort = WorkspaceToolPort> = {
   llm: LlmClient;
-  agent: CoderAgent;
-  port: WorkspaceToolPort;
+  agent: TurnAgent<TPort>;
+  port: TPort;
   history: Array<{ role: "user" | "assistant"; content: string }>;
   maxToolRounds: number;
   signal?: AbortSignal;
