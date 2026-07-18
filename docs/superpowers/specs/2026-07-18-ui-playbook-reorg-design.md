@@ -256,13 +256,13 @@ docs/
 
 ## 9. 成功标准
 
-- [ ] `docs/ui/` 八文件齐备且职责无交叉污染（principles 无 class；blueprints 无色值表）
-- [ ] `docs/README.md` 存在：链到 PRD / architecture / ui / plans；**不**链到 `superpowers/specs/**`
-- [ ] `docs/UI_GUIDE.md` 已删除；全仓无残留死链
-- [ ] 旧 UI design system spec 文首标明归档
-- [ ] page-blueprints **无** Settings 节
-- [ ] AI 阅读矩阵可被 `ui/README` 单独执行
+- [x] `docs/ui/` 八文件齐备且职责无交叉污染（principles 无 class；blueprints 无色值表）
+- [x] `docs/README.md` 存在：链到 PRD / architecture / ui / plans；**不**链到 `superpowers/specs/**`
+- [x] `docs/UI_GUIDE.md` 已删除；全仓无残留死链
+- [x] 旧 UI design system spec 文首标明归档
+- [x] page-blueprints **无** Settings 节
+- [x] AI 阅读矩阵可被 `ui/README` 单独执行
 
 ## 10. 后续
 
-批准本文后：用 writing-plans 产出「拆分落地」实现计划（写文件、迁内容、改引用、删 `UI_GUIDE.md`），再执行。
+已落地于分支 `docs/ui-playbook-reorg`。日常入口：`docs/ui/README.md`；docs 索引：`docs/README.md`。
