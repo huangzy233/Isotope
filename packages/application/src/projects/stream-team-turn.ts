@@ -1,5 +1,5 @@
 import { runTurn } from "@isotope/agent-runtime";
-import type { CoderAgent, LeaderAgent } from "@isotope/agents";
+import type { CoderAgent, LeaderAgent, TaskToolPort } from "@isotope/agents";
 import type { LlmClient } from "@isotope/llm";
 import type { PreviewService } from "@isotope/preview";
 import type {
@@ -353,25 +353,23 @@ export function beginTeamTurn(
     ok: true,
     run: async (emit) => {
       let createdTaskId: string | undefined;
-      let mikeMessageId: string | undefined;
+      let mikeMessageId = "";
       const mikeProcess: MessageProcess = { steps: [] };
       try {
-        if (replaceId) {
-          mikeMessageId = replaceId;
-        } else {
-          mikeMessageId = deps.workspace.appendMessage({
-            projectId: input.projectId,
-            role: "assistant",
-            content: ASSISTANT_PLACEHOLDER,
-            agentName: "Mike",
-          }).id;
-        }
+        mikeMessageId = replaceId
+          ? replaceId
+          : deps.workspace.appendMessage({
+              projectId: input.projectId,
+              role: "assistant",
+              content: ASSISTANT_PLACEHOLDER,
+              agentName: "Mike",
+            }).id;
 
         emit({ type: "speaker", agentName: "Mike", messageId: mikeMessageId });
 
         const mikeCallbacks = trackProcess(mikeProcess, emit);
 
-        const taskPort = {
+        const taskPort: TaskToolPort = {
           createTask: (args: { title: string; assignee: "Alex" }) => {
             const task = deps.workspace.createTask({
               projectId: input.projectId,

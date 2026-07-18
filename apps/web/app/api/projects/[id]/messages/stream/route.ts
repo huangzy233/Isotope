@@ -1,16 +1,80 @@
 import {
   ASSISTANT_PLACEHOLDER,
   beginEngineerTurn,
+  beginTeamTurn,
+  getProject,
+  type EngineerTurnEvent,
+  type TeamTurnEvent,
 } from "@isotope/application";
 import { readSession } from "@/lib/auth";
-import { createTurnDeps } from "@/lib/agent";
+import { createTeamTurnDeps, createTurnDeps } from "@/lib/agent";
 import { getPreview } from "@/lib/preview";
+import { ensureTaskRuntime, getTaskBus } from "@/lib/task-runtime";
 import { getWorkspace } from "@/lib/workspace";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 type RouteContext = { params: Promise<{ id: string }> };
+
+function sendSse(
+  controller: ReadableStreamDefaultController<Uint8Array>,
+  encoder: TextEncoder,
+  event: string,
+  data: unknown,
+) {
+  controller.enqueue(
+    encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`),
+  );
+}
+
+function forwardTurnEvent(
+  send: (event: string, data: unknown) => void,
+  ev: EngineerTurnEvent | TeamTurnEvent,
+) {
+  switch (ev.type) {
+    case "speaker":
+      send("speaker", { agentName: ev.agentName, messageId: ev.messageId });
+      break;
+    case "status":
+      send("status", { phase: ev.phase });
+      break;
+    case "thinking":
+      send("thinking", { text: ev.text });
+      break;
+    case "tool":
+      send("tool", {
+        id: ev.id,
+        name: ev.name,
+        state: ev.state,
+        summary: ev.summary,
+        ...(ev.ok !== undefined ? { ok: ev.ok } : {}),
+      });
+      break;
+    case "token":
+      send("token", { text: ev.text });
+      break;
+    case "task":
+      send("task", {
+        taskId: ev.taskId,
+        status: ev.status,
+        title: ev.title,
+        assignee: ev.assignee,
+      });
+      break;
+    case "done":
+      send("done", {
+        messageId: ev.messageId,
+        filesChanged: ev.filesChanged,
+        previewEnqueued: ev.previewEnqueued,
+        ...("taskId" in ev && ev.taskId ? { taskId: ev.taskId } : {}),
+      });
+      break;
+    case "error":
+      send("error", { message: ev.message });
+      break;
+  }
+}
 
 export async function POST(request: Request, context: RouteContext) {
   const session = await readSession();
@@ -31,14 +95,31 @@ export async function POST(request: Request, context: RouteContext) {
     return Response.json({ error: "消息不能为空" }, { status: 400 });
   }
 
-  let turnDeps;
-  try {
-    turnDeps = createTurnDeps();
-  } catch (err) {
-    const msg =
-      "生成失败：" +
-      (err instanceof Error ? err.message : "LLM 配置无效").slice(0, 300);
-    const workspace = getWorkspace();
+  ensureTaskRuntime();
+  const workspace = getWorkspace();
+  const project = getProject(
+    { ownerUserId: session.username, projectId: id },
+    workspace,
+  );
+  if (!project) {
+    return Response.json({ error: "项目不存在" }, { status: 404 });
+  }
+
+  const turnInput =
+    body.action === "continue"
+      ? {
+          ownerUserId: session.username,
+          projectId: id,
+          action: "continue" as const,
+        }
+      : {
+          ownerUserId: session.username,
+          projectId: id,
+          action: "send" as const,
+          content: String(body.content),
+        };
+
+  const writeConfigError = (msg: string) => {
     const messages = workspace.listMessages(id);
     if (body.action === "continue") {
       const last = messages.at(-1);
@@ -50,31 +131,49 @@ export async function POST(request: Request, context: RouteContext) {
         projectId: id,
         role: "assistant",
         content: msg,
-        agentName: "Alex",
+        agentName: project.mode === "team" ? "Mike" : "Alex",
       });
     }
-    return Response.json({ error: msg }, { status: 500 });
-  }
+  };
 
-  const begun = beginEngineerTurn(
-    body.action === "continue"
-      ? {
-          ownerUserId: session.username,
-          projectId: id,
-          action: "continue",
-        }
-      : {
-          ownerUserId: session.username,
-          projectId: id,
-          action: "send",
-          content: String(body.content),
-        },
-    {
-      workspace: getWorkspace(),
+  let begun:
+    | ReturnType<typeof beginTeamTurn>
+    | ReturnType<typeof beginEngineerTurn>;
+
+  if (project.mode === "team") {
+    let teamDeps;
+    try {
+      teamDeps = createTeamTurnDeps();
+    } catch (err) {
+      const msg =
+        "生成失败：" +
+        (err instanceof Error ? err.message : "LLM 配置无效").slice(0, 300);
+      writeConfigError(msg);
+      return Response.json({ error: msg }, { status: 500 });
+    }
+    begun = beginTeamTurn(turnInput, {
+      workspace,
+      preview: getPreview(),
+      bus: getTaskBus(),
+      ...teamDeps,
+    });
+  } else {
+    let turnDeps;
+    try {
+      turnDeps = createTurnDeps();
+    } catch (err) {
+      const msg =
+        "生成失败：" +
+        (err instanceof Error ? err.message : "LLM 配置无效").slice(0, 300);
+      writeConfigError(msg);
+      return Response.json({ error: msg }, { status: 500 });
+    }
+    begun = beginEngineerTurn(turnInput, {
+      workspace,
       preview: getPreview(),
       ...turnDeps,
-    },
-  );
+    });
+  }
 
   if (!begun.ok) {
     const status =
@@ -95,46 +194,10 @@ export async function POST(request: Request, context: RouteContext) {
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
     async start(controller) {
-      const send = (event: string, data: unknown) => {
-        controller.enqueue(
-          encoder.encode(
-            `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`,
-          ),
-        );
-      };
+      const send = (event: string, data: unknown) =>
+        sendSse(controller, encoder, event, data);
       try {
-        await begun.run((ev) => {
-          switch (ev.type) {
-            case "status":
-              send("status", { phase: ev.phase });
-              break;
-            case "thinking":
-              send("thinking", { text: ev.text });
-              break;
-            case "tool":
-              send("tool", {
-                id: ev.id,
-                name: ev.name,
-                state: ev.state,
-                summary: ev.summary,
-                ...(ev.ok !== undefined ? { ok: ev.ok } : {}),
-              });
-              break;
-            case "token":
-              send("token", { text: ev.text });
-              break;
-            case "done":
-              send("done", {
-                messageId: ev.messageId,
-                filesChanged: ev.filesChanged,
-                previewEnqueued: ev.previewEnqueued,
-              });
-              break;
-            case "error":
-              send("error", { message: ev.message });
-              break;
-          }
-        });
+        await begun.run((ev) => forwardTurnEvent(send, ev));
       } finally {
         controller.close();
       }

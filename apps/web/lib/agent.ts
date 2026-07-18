@@ -1,8 +1,17 @@
 import { readFileSync } from "node:fs";
 import { parse } from "yaml";
-import { createCoderAgent } from "@isotope/agents";
+import {
+  createCoderAgent,
+  createLeaderAgent,
+  type CoderAgent,
+  type LeaderAgent,
+} from "@isotope/agents";
 import { createOpenAiCompatibleClient, type LlmClient } from "@isotope/llm";
-import { alexSystemPromptPath, llmConfigPath } from "./paths";
+import {
+  alexSystemPromptPath,
+  llmConfigPath,
+  mikeSystemPromptPath,
+} from "./paths";
 
 type LlmFileConfig = {
   baseUrl: string;
@@ -16,11 +25,7 @@ export function loadLlmFileConfig(): LlmFileConfig {
   return data;
 }
 
-export function createTurnDeps(): {
-  llm: LlmClient;
-  agent: ReturnType<typeof createCoderAgent>;
-  maxToolRounds: number;
-} {
+function createSharedLlm(): { llm: LlmClient; maxToolRounds: number } {
   const file = loadLlmFileConfig();
   const apiKey = process.env.LLM_API_KEY?.trim() ?? "";
   if (!apiKey) {
@@ -32,10 +37,36 @@ export function createTurnDeps(): {
     model: process.env.LLM_MODEL?.trim() || file.model,
     timeoutMs: file.timeoutMs,
   });
+  return { llm, maxToolRounds: file.maxToolRounds };
+}
+
+export function createTurnDeps(): {
+  llm: LlmClient;
+  agent: ReturnType<typeof createCoderAgent>;
+  maxToolRounds: number;
+} {
+  const { llm, maxToolRounds } = createSharedLlm();
   const systemPrompt = readFileSync(alexSystemPromptPath(), "utf8");
   return {
     llm,
     agent: createCoderAgent({ systemPrompt }),
-    maxToolRounds: file.maxToolRounds,
+    maxToolRounds,
+  };
+}
+
+export function createTeamTurnDeps(): {
+  llm: LlmClient;
+  leader: LeaderAgent;
+  coder: CoderAgent;
+  maxToolRounds: number;
+} {
+  const { llm, maxToolRounds } = createSharedLlm();
+  const mikePrompt = readFileSync(mikeSystemPromptPath(), "utf8");
+  const alexPrompt = readFileSync(alexSystemPromptPath(), "utf8");
+  return {
+    llm,
+    leader: createLeaderAgent({ systemPrompt: mikePrompt }),
+    coder: createCoderAgent({ systemPrompt: alexPrompt }),
+    maxToolRounds,
   };
 }

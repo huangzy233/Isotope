@@ -1,9 +1,18 @@
-import { deleteProject, getProject } from "@isotope/application";
+import {
+  deleteProject,
+  getProject,
+  updateProjectMode,
+} from "@isotope/application";
 import { NextResponse } from "next/server";
 import { readSession } from "@/lib/auth";
+import { ensureTaskRuntime } from "@/lib/task-runtime";
 import { getWorkspace } from "@/lib/workspace";
 
 type RouteContext = { params: Promise<{ id: string }> };
+
+function parseMode(v: unknown): "engineer" | "team" | null {
+  return v === "engineer" || v === "team" ? v : null;
+}
 
 export async function GET(_request: Request, context: RouteContext) {
   const session = await readSession();
@@ -14,6 +23,33 @@ export async function GET(_request: Request, context: RouteContext) {
   const { id } = await context.params;
   const project = getProject(
     { ownerUserId: session.username, projectId: id },
+    getWorkspace(),
+  );
+  if (!project) {
+    return NextResponse.json({ error: "项目不存在" }, { status: 404 });
+  }
+
+  return NextResponse.json({ project });
+}
+
+export async function PATCH(request: Request, context: RouteContext) {
+  const session = await readSession();
+  if (!session) {
+    return NextResponse.json({ error: "未登录" }, { status: 401 });
+  }
+
+  ensureTaskRuntime();
+  const { id } = await context.params;
+  const body = (await request.json().catch(() => null)) as {
+    mode?: unknown;
+  } | null;
+  const mode = parseMode(body?.mode);
+  if (!mode) {
+    return NextResponse.json({ error: "模式无效" }, { status: 400 });
+  }
+
+  const project = updateProjectMode(
+    { ownerUserId: session.username, projectId: id, mode },
     getWorkspace(),
   );
   if (!project) {

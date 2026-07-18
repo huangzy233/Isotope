@@ -1,3 +1,4 @@
+import type { WorkspaceToolPort } from "@isotope/agents";
 import type { LlmMessage } from "@isotope/llm";
 import type {
   RunTurnInput,
@@ -22,7 +23,9 @@ function hasThinking(steps: TurnProcessStep[]): boolean {
   return steps.some((s) => s.type === "thinking" && s.text.length > 0);
 }
 
-export async function runTurn(input: RunTurnInput): Promise<RunTurnResult> {
+export async function runTurn<TPort = WorkspaceToolPort>(
+  input: RunTurnInput<TPort>,
+): Promise<RunTurnResult> {
   const {
     llm,
     agent,

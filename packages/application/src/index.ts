@@ -24,5 +24,12 @@ export {
   type TeamTurnDeps,
   type TeamTurnEvent,
 } from "./projects/stream-team-turn.js";
+export {
+  createTaskEventBus,
+  type TaskEvent,
+  type TaskEventBus,
+} from "./projects/task-event-bus.js";
+export { startTaskWatchdog } from "./projects/task-watchdog.js";
+export { isTurnLocked } from "./projects/turn-lock.js";
 export { updateProjectMode } from "./projects/update-project-mode.js";
 export { listTasks } from "./projects/list-tasks.js";
