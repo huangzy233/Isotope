@@ -30,13 +30,23 @@ export type WorkspaceStore = {
   createProject(input: {
     ownerUserId: string;
     name: string;
-    mode: ProjectMode;
+    planEnabled?: boolean;
+    teamEnabled?: boolean;
+    mode?: ProjectMode;
   }): Project;
   listProjects(ownerUserId: string): Project[];
   getProject(id: string): Project | null;
   updateProjectMeta(
     id: string,
-    patch: { updatedAt?: string; name?: string; mode?: ProjectMode },
+    patch: {
+      updatedAt?: string;
+      name?: string;
+      mode?: ProjectMode;
+      planEnabled?: boolean;
+      teamEnabled?: boolean;
+      planConfirmed?: boolean;
+      confirmedRequirement?: string | null;
+    },
   ): void;
   appendMessage(input: {
     projectId: string;
@@ -98,6 +108,10 @@ type ProjectRow = {
   owner_user_id: string;
   name: string;
   mode: ProjectMode;
+  plan_enabled: number;
+  team_enabled: number;
+  plan_confirmed: number;
+  confirmed_requirement: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -162,11 +176,20 @@ function toProject(row: ProjectRow): Project {
     id: row.id,
     ownerUserId: row.owner_user_id,
     name: row.name,
-    mode: row.mode,
+    mode: row.team_enabled ? "team" : "engineer",
+    planEnabled: row.plan_enabled === 1,
+    teamEnabled: row.team_enabled === 1,
+    planConfirmed: row.plan_confirmed === 1,
+    ...(row.confirmed_requirement === null || row.confirmed_requirement === undefined
+      ? {}
+      : { confirmedRequirement: row.confirmed_requirement }),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
 }
+
+const PROJECT_SELECT = `id, owner_user_id, name, mode, plan_enabled, team_enabled,
+  plan_confirmed, confirmed_requirement, created_at, updated_at`;
 
 function toMessage(row: MessageRow): Message {
   const process = parseProcessJson(row.process_json);
@@ -234,11 +257,20 @@ export function createFsSqliteWorkspace(opts: {
   return {
     createProject(input) {
       const now = new Date().toISOString();
+      const planEnabled = input.planEnabled ?? false;
+      const teamEnabled =
+        input.teamEnabled !== undefined
+          ? input.teamEnabled
+          : input.mode === "team";
+      const mode: ProjectMode = teamEnabled ? "team" : "engineer";
       const project: Project = {
         id: randomId("proj_"),
         ownerUserId: input.ownerUserId,
         name: input.name,
-        mode: input.mode,
+        mode,
+        planEnabled,
+        teamEnabled,
+        planConfirmed: false,
         createdAt: now,
         updatedAt: now,
       };
@@ -248,14 +280,19 @@ export function createFsSqliteWorkspace(opts: {
       database
         .prepare(
           `INSERT INTO projects
-            (id, owner_user_id, name, mode, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?)`,
+            (id, owner_user_id, name, mode, plan_enabled, team_enabled,
+             plan_confirmed, confirmed_requirement, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           project.id,
           project.ownerUserId,
           project.name,
           project.mode,
+          project.planEnabled ? 1 : 0,
+          project.teamEnabled ? 1 : 0,
+          0,
+          null,
           project.createdAt,
           project.updatedAt,
         );
@@ -265,7 +302,7 @@ export function createFsSqliteWorkspace(opts: {
     listProjects(ownerUserId) {
       const rows = database
         .prepare(
-          `SELECT id, owner_user_id, name, mode, created_at, updated_at
+          `SELECT ${PROJECT_SELECT}
            FROM projects
            WHERE owner_user_id = ?
            ORDER BY updated_at DESC`,
@@ -277,7 +314,7 @@ export function createFsSqliteWorkspace(opts: {
     getProject(id) {
       const row = database
         .prepare(
-          `SELECT id, owner_user_id, name, mode, created_at, updated_at
+          `SELECT ${PROJECT_SELECT}
            FROM projects
            WHERE id = ?`,
         )
@@ -287,7 +324,7 @@ export function createFsSqliteWorkspace(opts: {
 
     updateProjectMeta(id, patch) {
       const assignments: string[] = [];
-      const values: string[] = [];
+      const values: Array<string | number | null> = [];
       if (patch.updatedAt !== undefined) {
         assignments.push("updated_at = ?");
         values.push(patch.updatedAt);
@@ -296,9 +333,28 @@ export function createFsSqliteWorkspace(opts: {
         assignments.push("name = ?");
         values.push(patch.name);
       }
-      if (patch.mode !== undefined) {
+      if (patch.planEnabled !== undefined) {
+        assignments.push("plan_enabled = ?");
+        values.push(patch.planEnabled ? 1 : 0);
+      }
+      if (patch.teamEnabled !== undefined) {
+        assignments.push("team_enabled = ?");
+        values.push(patch.teamEnabled ? 1 : 0);
+        assignments.push("mode = ?");
+        values.push(patch.teamEnabled ? "team" : "engineer");
+      } else if (patch.mode !== undefined) {
         assignments.push("mode = ?");
         values.push(patch.mode);
+        assignments.push("team_enabled = ?");
+        values.push(patch.mode === "team" ? 1 : 0);
+      }
+      if (patch.planConfirmed !== undefined) {
+        assignments.push("plan_confirmed = ?");
+        values.push(patch.planConfirmed ? 1 : 0);
+      }
+      if (patch.confirmedRequirement !== undefined) {
+        assignments.push("confirmed_requirement = ?");
+        values.push(patch.confirmedRequirement);
       }
       if (assignments.length === 0) {
         return;

@@ -297,4 +297,37 @@ describe("createFsSqliteWorkspace", () => {
     expect(store.takePendingVersionIntent(p.id)).toBe(false);
     expect(store.listVersions(p.id)).toEqual([]);
   });
+
+  it("createProject persists plan/team flags and migrates legacy mode", () => {
+    const p = store.createProject({
+      ownerUserId: "demo",
+      name: "x",
+      planEnabled: true,
+      teamEnabled: true,
+    });
+    expect(p.planEnabled).toBe(true);
+    expect(p.teamEnabled).toBe(true);
+    expect(p.planConfirmed).toBe(false);
+    expect(p.mode).toBe("team");
+
+    store.updateProjectMeta(p.id, {
+      planConfirmed: true,
+      confirmedRequirement: "做待办",
+      planEnabled: false,
+    });
+    const again = store.getProject(p.id);
+    expect(again?.planConfirmed).toBe(true);
+    expect(again?.confirmedRequirement).toBe("做待办");
+    expect(again?.planEnabled).toBe(false);
+  });
+
+  it("legacy mode: team maps to teamEnabled", () => {
+    const p = store.createProject({
+      ownerUserId: "demo",
+      name: "y",
+      mode: "team",
+    });
+    expect(p.teamEnabled).toBe(true);
+    expect(p.planEnabled).toBe(false);
+  });
 });

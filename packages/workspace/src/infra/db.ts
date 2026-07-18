@@ -43,6 +43,25 @@ export function openWorkspaceDatabase(dataRoot: string): Database.Database {
     database.exec(`ALTER TABLE messages ADD COLUMN version_id TEXT`);
   }
 
+  const projectCols = database
+    .prepare(`PRAGMA table_info(projects)`)
+    .all() as Array<{ name: string }>;
+  const add = (name: string, ddl: string) => {
+    if (!projectCols.some((c) => c.name === name)) {
+      database.exec(ddl);
+    }
+  };
+  add("plan_enabled", `ALTER TABLE projects ADD COLUMN plan_enabled INTEGER NOT NULL DEFAULT 0`);
+  add("team_enabled", `ALTER TABLE projects ADD COLUMN team_enabled INTEGER NOT NULL DEFAULT 0`);
+  add("plan_confirmed", `ALTER TABLE projects ADD COLUMN plan_confirmed INTEGER NOT NULL DEFAULT 0`);
+  add("confirmed_requirement", `ALTER TABLE projects ADD COLUMN confirmed_requirement TEXT`);
+
+  // 一次性回填：旧行 team_enabled 仍为 0 且 mode='team'
+  database.exec(`
+    UPDATE projects SET team_enabled = 1
+    WHERE mode = 'team' AND team_enabled = 0
+  `);
+
   database.exec(`
     CREATE TABLE IF NOT EXISTS versions (
       id TEXT PRIMARY KEY,

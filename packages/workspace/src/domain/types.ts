@@ -3,7 +3,12 @@ export type ProjectMode = "engineer" | "team";
 export type Project = {
   id: string;
   name: string;
+  /** @deprecated 派生自 teamEnabled，勿作 Plan 真相源 */
   mode: ProjectMode;
+  planEnabled: boolean;
+  teamEnabled: boolean;
+  planConfirmed: boolean;
+  confirmedRequirement?: string;
   ownerUserId: string;
   createdAt: string;
   updatedAt: string;
