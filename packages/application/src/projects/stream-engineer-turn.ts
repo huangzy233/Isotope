@@ -6,6 +6,10 @@ import type { MessageProcess, WorkspaceStore } from "@isotope/workspace";
 import { checkpointProcess } from "./checkpoint-process.js";
 import { enqueuePreviewBuild } from "./enqueue-preview-build.js";
 import { getProject } from "./get-project.js";
+import {
+  createPlanGatedWritePort,
+  isPlanClarifyGateOpen,
+} from "./plan-gate.js";
 import { ASSISTANT_PLACEHOLDER } from "./placeholder.js";
 import { isTransportDisconnectError } from "./transport-error.js";
 import {
@@ -46,6 +50,14 @@ export type EngineerTurnInput =
       projectId: string;
       action: "send";
       content: string;
+      silentHandoff?: false;
+    }
+  | {
+      ownerUserId: string;
+      projectId: string;
+      action: "send";
+      content?: string;
+      silentHandoff: true;
     };
 
 export type EngineerTurnDeps = {
@@ -68,12 +80,11 @@ export function beginEngineerTurn(
   input: EngineerTurnInput,
   deps: EngineerTurnDeps,
 ): BeginEngineerTurnResult {
-  if (
-    !getProject(
-      { ownerUserId: input.ownerUserId, projectId: input.projectId },
-      deps.workspace,
-    )
-  ) {
+  const owned = getProject(
+    { ownerUserId: input.ownerUserId, projectId: input.projectId },
+    deps.workspace,
+  );
+  if (!owned) {
     return { ok: false, status: "not_found" };
   }
 
@@ -90,10 +101,12 @@ export function beginEngineerTurn(
       return { ok: false, status: "bad_request" };
     }
     replaceId = last.id;
-  } else {
-    if (!input.content.trim()) {
+  } else if (input.silentHandoff) {
+    if (!owned.planConfirmed || !owned.confirmedRequirement) {
       return { ok: false, status: "bad_request" };
     }
+  } else if (!input.content.trim()) {
+    return { ok: false, status: "bad_request" };
   }
 
   if (!tryAcquireTurnLock(input.projectId)) {
@@ -102,7 +115,7 @@ export function beginEngineerTurn(
 
   ensureTurnHub(input.projectId);
 
-  // send：加锁成功后再清理遗留占位并 append user，避免 conflict 时脏写
+  // send：加锁成功后再清理遗留占位；silentHandoff 不 append user
   if (input.action === "send") {
     for (const m of deps.workspace.listMessages(input.projectId)) {
       if (m.role === "assistant" && m.content === ASSISTANT_PLACEHOLDER) {
@@ -111,11 +124,13 @@ export function beginEngineerTurn(
         });
       }
     }
-    deps.workspace.appendMessage({
-      projectId: input.projectId,
-      role: "user",
-      content: input.content.trim(),
-    });
+    if (!input.silentHandoff) {
+      deps.workspace.appendMessage({
+        projectId: input.projectId,
+        role: "user",
+        content: input.content.trim(),
+      });
+    }
     replaceId = deps.workspace.appendMessage({
       projectId: input.projectId,
       role: "assistant",
@@ -131,6 +146,9 @@ export function beginEngineerTurn(
         publishTurnEvent(input.projectId, event);
 
       try {
+        const project =
+          deps.workspace.getProject(input.projectId) ?? owned;
+
         const history = deps.workspace
           .listMessages(input.projectId)
           .filter((m) => m.role === "user" || m.role === "assistant")
@@ -139,8 +157,14 @@ export function beginEngineerTurn(
             role: m.role as "user" | "assistant",
             content: m.content,
           }));
+        if (project.confirmedRequirement) {
+          history.unshift({
+            role: "user",
+            content: `【已确认需求】\n${project.confirmedRequirement}`,
+          });
+        }
 
-        const port = {
+        const basePort = {
           listFiles: (dir?: string) =>
             deps.workspace.listFiles(input.projectId, dir),
           readFile: (p: string) =>
@@ -148,6 +172,7 @@ export function beginEngineerTurn(
           writeFile: (p: string, c: string) =>
             deps.workspace.writeFile(input.projectId, p, c),
         };
+        const port = createPlanGatedWritePort(project, basePort);
 
         const process: MessageProcess = { steps: [] };
         const checkpoint = () => {
@@ -239,16 +264,20 @@ export function beginEngineerTurn(
 
           let previewEnqueued = false;
           if (result.filesChanged) {
-            enqueuePreviewBuild(
-              {
-                ownerUserId: input.ownerUserId,
-                projectId: input.projectId,
-              },
-              deps.workspace,
-              deps.preview,
-              { recordVersionIntent: true },
-            );
-            previewEnqueued = true;
+            const latest =
+              deps.workspace.getProject(input.projectId) ?? project;
+            if (!isPlanClarifyGateOpen(latest)) {
+              enqueuePreviewBuild(
+                {
+                  ownerUserId: input.ownerUserId,
+                  projectId: input.projectId,
+                },
+                deps.workspace,
+                deps.preview,
+                { recordVersionIntent: true },
+              );
+              previewEnqueued = true;
+            }
           }
           publish({
             type: "done",

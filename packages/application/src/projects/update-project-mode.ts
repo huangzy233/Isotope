@@ -1,16 +1,17 @@
 import type { Project, ProjectMode, WorkspaceStore } from "@isotope/workspace";
-import { getProject } from "./get-project.js";
+import { updateProjectFlags } from "./update-project-flags.js";
 
+/** @deprecated 用 updateProjectFlags；保留 mode→teamEnabled 兼容 */
 export function updateProjectMode(
   input: { ownerUserId: string; projectId: string; mode: ProjectMode },
   workspace: WorkspaceStore,
 ): Project | null {
-  if (!getProject(
-    { ownerUserId: input.ownerUserId, projectId: input.projectId },
+  return updateProjectFlags(
+    {
+      ownerUserId: input.ownerUserId,
+      projectId: input.projectId,
+      teamEnabled: input.mode === "team",
+    },
     workspace,
-  )) {
-    return null;
-  }
-  workspace.updateProjectMeta(input.projectId, { mode: input.mode });
-  return workspace.getProject(input.projectId);
+  );
 }

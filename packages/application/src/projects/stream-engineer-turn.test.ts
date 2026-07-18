@@ -606,6 +606,188 @@ describe("beginEngineerTurn", () => {
     await running;
   });
 
+  it("blocks write_file while plan clarify gate is open", async () => {
+    const { project } = createProject(
+      {
+        ownerUserId: "demo",
+        requirement: "做一个空页面",
+        planEnabled: true,
+      },
+      workspace,
+    );
+    const before = workspace.readFile(project.id, "src/App.tsx");
+    const preview = mockPreview();
+
+    const begun = beginEngineerTurn(
+      {
+        ownerUserId: "demo",
+        projectId: project.id,
+        action: "continue",
+      },
+      {
+        workspace,
+        preview,
+        llm: llmFromScript([
+          [
+            {
+              type: "tool_calls",
+              toolCalls: [
+                {
+                  id: "c1",
+                  type: "function",
+                  function: {
+                    name: "write_file",
+                    arguments: JSON.stringify({
+                      path: "src/App.tsx",
+                      content:
+                        "export default function App(){return <div>gated</div>}",
+                    }),
+                  },
+                },
+              ],
+            },
+            { type: "finished", finishReason: "tool_calls" },
+          ],
+          [
+            { type: "content_delta", text: "先确认需求" },
+            { type: "finished", finishReason: "stop" },
+          ],
+        ]),
+        agent: createCoderAgent({ systemPrompt: "test" }),
+        maxToolRounds: 8,
+      },
+    );
+
+    expect(begun.ok).toBe(true);
+    if (!begun.ok) return;
+    const events = await runAndCollect(project.id, begun.run);
+
+    expect(workspace.readFile(project.id, "src/App.tsx")).toBe(before);
+    expect(preview.enqueueBuild).not.toHaveBeenCalled();
+    expect(
+      events.some(
+        (e) =>
+          e.type === "tool" &&
+          e.name === "write_file" &&
+          e.state === "end" &&
+          e.ok === false,
+      ),
+    ).toBe(true);
+    expect(
+      events.some(
+        (e) =>
+          e.type === "done" &&
+          e.filesChanged === false &&
+          e.previewEnqueued === false,
+      ),
+    ).toBe(true);
+  });
+
+  it("silentHandoff does not append user but still runs assistant", async () => {
+    const { project, messages: seeded } = createProject(
+      {
+        ownerUserId: "demo",
+        requirement: "初始需求",
+        mode: "engineer",
+      },
+      workspace,
+    );
+    const seedAssistant = seeded.find((m) => m.role === "assistant");
+    workspace.updateMessage(seedAssistant!.id, { content: "先前回复" });
+    workspace.updateProjectMeta(project.id, {
+      planConfirmed: true,
+      confirmedRequirement: "做一款待办应用，支持增删改",
+      planEnabled: false,
+    });
+
+    const before = workspace.listMessages(project.id);
+    let capturedMessages:
+      | Array<{ role: string; content?: string | null }>
+      | undefined;
+    const base = llmFromScript([
+      [
+        { type: "content_delta", text: "按已确认需求开工" },
+        { type: "finished", finishReason: "stop" },
+      ],
+    ]);
+    const llm: LlmClient = {
+      async *complete(input) {
+        capturedMessages = input.messages.map((m) => ({
+          role: m.role,
+          content: "content" in m ? m.content : undefined,
+        }));
+        yield* base.complete(input);
+      },
+    };
+
+    const begun = beginEngineerTurn(
+      {
+        ownerUserId: "demo",
+        projectId: project.id,
+        action: "send",
+        silentHandoff: true,
+      },
+      {
+        workspace,
+        preview: mockPreview(),
+        llm,
+        agent: createCoderAgent({ systemPrompt: "test" }),
+        maxToolRounds: 8,
+      },
+    );
+
+    expect(begun.ok).toBe(true);
+    if (!begun.ok) return;
+    await begun.run();
+
+    const after = workspace.listMessages(project.id);
+    expect(after.length - before.length).toBe(1);
+    expect(after.at(-1)?.role).toBe("assistant");
+    expect(after.at(-1)?.content).toBe("按已确认需求开工");
+    expect(after.some((m) => m.content === "做一款待办应用，支持增删改")).toBe(
+      false,
+    );
+    const joined = (capturedMessages ?? [])
+      .map((m) => (typeof m.content === "string" ? m.content : ""))
+      .join("\n");
+    expect(joined).toContain("【已确认需求】");
+    expect(joined).toContain("做一款待办应用，支持增删改");
+  });
+
+  it("silentHandoff without confirmed requirement is bad_request", () => {
+    const { project, messages: seeded } = createProject(
+      {
+        ownerUserId: "demo",
+        requirement: "初始需求",
+        mode: "engineer",
+      },
+      workspace,
+    );
+    workspace.updateMessage(seeded.find((m) => m.role === "assistant")!.id, {
+      content: "先前回复",
+    });
+
+    const begun = beginEngineerTurn(
+      {
+        ownerUserId: "demo",
+        projectId: project.id,
+        action: "send",
+        silentHandoff: true,
+      },
+      {
+        workspace,
+        preview: mockPreview(),
+        llm: llmFromScript([]),
+        agent: createCoderAgent({ systemPrompt: "test" }),
+        maxToolRounds: 8,
+      },
+    );
+
+    expect(begun.ok).toBe(false);
+    if (begun.ok) return;
+    expect(begun.status).toBe("bad_request");
+  });
+
   it("send creates placeholder early so mid-turn process can persist", async () => {
     const { project } = createProject(
       {

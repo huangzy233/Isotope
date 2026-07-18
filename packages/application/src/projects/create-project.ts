@@ -13,7 +13,10 @@ export function createProject(
   input: {
     ownerUserId: string;
     requirement: string;
-    mode: ProjectMode;
+    planEnabled?: boolean;
+    teamEnabled?: boolean;
+    /** @deprecated 用 teamEnabled；保留兼容 */
+    mode?: ProjectMode;
   },
   workspace: WorkspaceStore,
 ): { project: Project; messages: Message[] } {
@@ -21,15 +24,31 @@ export function createProject(
   if (!requirement) {
     throw new Error("需求不能为空");
   }
-  if (!MODES.has(input.mode)) {
+
+  const hasMode = input.mode !== undefined;
+  const hasFlags =
+    input.planEnabled !== undefined || input.teamEnabled !== undefined;
+  if (!hasMode && !hasFlags) {
+    throw new Error("请指定 mode 或 planEnabled/teamEnabled");
+  }
+  if (hasMode && !MODES.has(input.mode!)) {
     throw new Error("模式无效，请选择 engineer 或 team");
   }
+
+  const planEnabled = input.planEnabled ?? false;
+  const teamEnabled =
+    input.teamEnabled !== undefined
+      ? input.teamEnabled
+      : input.mode === "team";
 
   const project = workspace.createProject({
     ownerUserId: input.ownerUserId,
     name: deriveProjectName(requirement),
-    mode: input.mode,
+    planEnabled,
+    teamEnabled,
   });
+
+  const agentName = planEnabled ? "Pat" : teamEnabled ? "Mike" : "Alex";
 
   const user = workspace.appendMessage({
     projectId: project.id,
@@ -40,7 +59,7 @@ export function createProject(
     projectId: project.id,
     role: "assistant",
     content: ASSISTANT_PLACEHOLDER,
-    agentName: input.mode === "team" ? "Mike" : "Alex",
+    agentName,
   });
 
   return { project, messages: [user, assistant] };

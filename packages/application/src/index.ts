@@ -48,6 +48,7 @@ export {
   subscribeTurn,
   type TurnHubListener,
 } from "./projects/turn-hub.js";
+export { updateProjectFlags } from "./projects/update-project-flags.js";
 export { updateProjectMode } from "./projects/update-project-mode.js";
 export {
   resolveTurnKind,

@@ -11,6 +11,10 @@ import type {
 import { checkpointProcess } from "./checkpoint-process.js";
 import { enqueuePreviewBuild } from "./enqueue-preview-build.js";
 import { getProject } from "./get-project.js";
+import {
+  createPlanGatedWritePort,
+  isPlanClarifyGateOpen,
+} from "./plan-gate.js";
 import { ASSISTANT_PLACEHOLDER } from "./placeholder.js";
 import type { TaskEventBus } from "./task-event-bus.js";
 import type { EngineerTurnInput } from "./stream-engineer-turn.js";
@@ -86,7 +90,7 @@ function historyForProject(
   workspace: WorkspaceStore,
   projectId: string,
 ): Array<{ role: "user" | "assistant"; content: string }> {
-  return workspace
+  const history = workspace
     .listMessages(projectId)
     .filter((m) => m.role === "user" || m.role === "assistant")
     .filter((m) => m.content !== ASSISTANT_PLACEHOLDER)
@@ -94,6 +98,14 @@ function historyForProject(
       role: m.role as "user" | "assistant",
       content: m.content,
     }));
+  const project = workspace.getProject(projectId);
+  if (project?.confirmedRequirement) {
+    history.unshift({
+      role: "user",
+      content: `【已确认需求】\n${project.confirmedRequirement}`,
+    });
+  }
+  return history;
 }
 
 function trackProcess(
@@ -243,12 +255,16 @@ async function runAlexForTask(input: {
     history.push({ role: "user", content: extraUserContent });
   }
 
-  const filePort = {
+  const project = deps.workspace.getProject(projectId);
+  const basePort = {
     listFiles: (dir?: string) => deps.workspace.listFiles(projectId, dir),
     readFile: (p: string) => deps.workspace.readFile(projectId, p),
     writeFile: (p: string, c: string) =>
       deps.workspace.writeFile(projectId, p, c),
   };
+  const filePort = project
+    ? createPlanGatedWritePort(project, basePort)
+    : basePort;
 
   try {
     const result = await runTurn({
@@ -281,13 +297,16 @@ async function runAlexForTask(input: {
 
     let previewEnqueued = false;
     if (result.filesChanged) {
-      enqueuePreviewBuild(
-        { ownerUserId, projectId },
-        deps.workspace,
-        deps.preview,
-        { recordVersionIntent: true },
-      );
-      previewEnqueued = true;
+      const latest = deps.workspace.getProject(projectId) ?? project;
+      if (!latest || !isPlanClarifyGateOpen(latest)) {
+        enqueuePreviewBuild(
+          { ownerUserId, projectId },
+          deps.workspace,
+          deps.preview,
+          { recordVersionIntent: true },
+        );
+        previewEnqueued = true;
+      }
     }
 
     return {
@@ -385,12 +404,11 @@ export function beginTeamTurn(
   input: EngineerTurnInput,
   deps: TeamTurnDeps,
 ): BeginTeamTurnResult {
-  if (
-    !getProject(
-      { ownerUserId: input.ownerUserId, projectId: input.projectId },
-      deps.workspace,
-    )
-  ) {
+  const owned = getProject(
+    { ownerUserId: input.ownerUserId, projectId: input.projectId },
+    deps.workspace,
+  );
+  if (!owned) {
     return { ok: false, status: "not_found" };
   }
 
@@ -407,10 +425,12 @@ export function beginTeamTurn(
       return { ok: false, status: "bad_request" };
     }
     replaceId = last.id;
-  } else {
-    if (!input.content.trim()) {
+  } else if (input.silentHandoff) {
+    if (!owned.planConfirmed || !owned.confirmedRequirement) {
       return { ok: false, status: "bad_request" };
     }
+  } else if (!input.content.trim()) {
+    return { ok: false, status: "bad_request" };
   }
 
   if (!tryAcquireTurnLock(input.projectId)) {
@@ -427,11 +447,13 @@ export function beginTeamTurn(
         });
       }
     }
-    deps.workspace.appendMessage({
-      projectId: input.projectId,
-      role: "user",
-      content: input.content.trim(),
-    });
+    if (!input.silentHandoff) {
+      deps.workspace.appendMessage({
+        projectId: input.projectId,
+        role: "user",
+        content: input.content.trim(),
+      });
+    }
   }
 
   return {
