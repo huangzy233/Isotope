@@ -13,6 +13,7 @@ import {
   beginEngineerTurn,
   type EngineerTurnEvent,
 } from "./stream-engineer-turn.js";
+import { subscribeTurn } from "./turn-hub.js";
 
 const templatePath = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -72,6 +73,19 @@ function llmWithDelay(
   };
 }
 
+async function runAndCollect(
+  projectId: string,
+  run: () => Promise<void>,
+): Promise<EngineerTurnEvent[]> {
+  const events: EngineerTurnEvent[] = [];
+  const unsub = subscribeTurn(projectId, (e) =>
+    events.push(e as EngineerTurnEvent),
+  );
+  await run();
+  unsub?.();
+  return events;
+}
+
 describe("beginEngineerTurn", () => {
   let dataRoot: string;
   let workspace: ReturnType<typeof createFsSqliteWorkspace>;
@@ -95,7 +109,6 @@ describe("beginEngineerTurn", () => {
       workspace,
     );
     const preview = mockPreview();
-    const events: EngineerTurnEvent[] = [];
 
     const begun = beginEngineerTurn(
       {
@@ -140,7 +153,7 @@ describe("beginEngineerTurn", () => {
     expect(begun.ok).toBe(true);
     if (!begun.ok) return;
 
-    await begun.run((ev) => events.push(ev));
+    const events = await runAndCollect(project.id, begun.run);
 
     const messages = workspace.listMessages(project.id);
     const last = messages.at(-1);
@@ -233,7 +246,7 @@ describe("beginEngineerTurn", () => {
 
     expect(begun.ok).toBe(true);
     if (!begun.ok) return;
-    await begun.run(() => {});
+    await begun.run();
 
     expect(capturedMessages).toBeDefined();
     const joined = (capturedMessages ?? [])
@@ -281,7 +294,7 @@ describe("beginEngineerTurn", () => {
 
     expect(begun.ok).toBe(true);
     if (!begun.ok) return;
-    await begun.run(() => {});
+    await begun.run();
 
     const after = workspace.listMessages(project.id);
     expect(after.length - before.length).toBe(2);
@@ -330,7 +343,7 @@ describe("beginEngineerTurn", () => {
 
     expect(begun.ok).toBe(true);
     if (!begun.ok) return;
-    await begun.run(() => {});
+    await begun.run();
 
     const after = workspace.listMessages(project.id);
     expect(after.every((m) => m.content !== ASSISTANT_PLACEHOLDER)).toBe(true);
@@ -391,7 +404,7 @@ describe("beginEngineerTurn", () => {
     expect(b.status).toBe("conflict");
 
     if (!a.ok) return;
-    await a.run(() => {});
+    await a.run();
   });
 
   it("llm complete throw emits error and prefixes placeholder with 生成失败：", async () => {
@@ -404,7 +417,6 @@ describe("beginEngineerTurn", () => {
       workspace,
     );
     const preview = mockPreview();
-    const events: EngineerTurnEvent[] = [];
 
     const begun = beginEngineerTurn(
       {
@@ -427,7 +439,7 @@ describe("beginEngineerTurn", () => {
 
     expect(begun.ok).toBe(true);
     if (!begun.ok) return;
-    await begun.run((ev) => events.push(ev));
+    const events = await runAndCollect(project.id, begun.run);
 
     const last = workspace.listMessages(project.id).at(-1);
     expect(last?.content.startsWith("生成失败：")).toBe(true);
@@ -437,5 +449,173 @@ describe("beginEngineerTurn", () => {
         (e) => e.type === "error" && e.message.startsWith("生成失败："),
       ),
     ).toBe(true);
+  });
+
+  it("publish to closed subscriber does not write 生成失败", async () => {
+    const { project } = createProject(
+      {
+        ownerUserId: "demo",
+        requirement: "x",
+        mode: "engineer",
+      },
+      workspace,
+    );
+    const begun = beginEngineerTurn(
+      {
+        ownerUserId: "demo",
+        projectId: project.id,
+        action: "continue",
+      },
+      {
+        workspace,
+        preview: mockPreview(),
+        llm: llmWithDelay(
+          [
+            [
+              { type: "content_delta", text: "你好" },
+              { type: "finished", finishReason: "stop" },
+            ],
+          ],
+          30,
+        ),
+        agent: createCoderAgent({ systemPrompt: "test" }),
+        maxToolRounds: 8,
+      },
+    );
+    expect(begun.ok).toBe(true);
+    if (!begun.ok) return;
+
+    subscribeTurn(project.id, () => {
+      throw new Error("Invalid state: Controller is already closed");
+    });
+
+    await begun.run();
+
+    const last = workspace.listMessages(project.id).at(-1);
+    expect(last?.content).toBe("你好");
+    expect(last?.content.startsWith("生成失败")).toBe(false);
+  });
+
+  it("checkpoints process on tool boundary while placeholder remains", async () => {
+    const { project } = createProject(
+      {
+        ownerUserId: "demo",
+        requirement: "x",
+        mode: "engineer",
+      },
+      workspace,
+    );
+    let resolveGate!: () => void;
+    const gate = new Promise<void>((r) => {
+      resolveGate = r;
+    });
+    let toolStarted = false;
+
+    const begun = beginEngineerTurn(
+      {
+        ownerUserId: "demo",
+        projectId: project.id,
+        action: "continue",
+      },
+      {
+        workspace,
+        preview: mockPreview(),
+        llm: {
+          async *complete() {
+            if (!toolStarted) {
+              toolStarted = true;
+              yield {
+                type: "tool_calls" as const,
+                toolCalls: [
+                  {
+                    id: "c1",
+                    type: "function" as const,
+                    function: {
+                      name: "list_files",
+                      arguments: JSON.stringify({ dir: "." }),
+                    },
+                  },
+                ],
+              };
+              yield { type: "finished" as const, finishReason: "tool_calls" };
+              await gate;
+              return;
+            }
+            yield { type: "content_delta" as const, text: "好了" };
+            yield { type: "finished" as const, finishReason: "stop" };
+          },
+        },
+        agent: createCoderAgent({ systemPrompt: "test" }),
+        maxToolRounds: 8,
+      },
+    );
+    expect(begun.ok).toBe(true);
+    if (!begun.ok) return;
+
+    const running = begun.run();
+    // 等到 tool start 落库
+    for (let i = 0; i < 50; i++) {
+      await delay(10);
+      const msg = workspace.listMessages(project.id).at(-1);
+      if (msg?.process?.steps.some((s) => s.type === "tool")) break;
+    }
+    const mid = workspace.listMessages(project.id).at(-1);
+    expect(mid?.content).toBe(ASSISTANT_PLACEHOLDER);
+    expect(mid?.process?.steps.some((s) => s.type === "tool")).toBe(true);
+
+    resolveGate();
+    await running;
+  });
+
+  it("send creates placeholder early so mid-turn process can persist", async () => {
+    const { project } = createProject(
+      {
+        ownerUserId: "demo",
+        requirement: "x",
+        mode: "engineer",
+      },
+      workspace,
+    );
+    // 清掉 createProject 的占位，模拟用户后续 send
+    const seed = workspace.listMessages(project.id).at(-1)!;
+    workspace.updateMessage(seed.id, { content: "已完成首轮" });
+
+    let resolveGate!: () => void;
+    const gate = new Promise<void>((r) => {
+      resolveGate = r;
+    });
+
+    const begun = beginEngineerTurn(
+      {
+        ownerUserId: "demo",
+        projectId: project.id,
+        action: "send",
+        content: "再改一下",
+      },
+      {
+        workspace,
+        preview: mockPreview(),
+        llm: {
+          async *complete() {
+            yield { type: "content_delta" as const, text: "改完" };
+            yield { type: "finished" as const, finishReason: "stop" };
+            await gate;
+          },
+        },
+        agent: createCoderAgent({ systemPrompt: "test" }),
+        maxToolRounds: 8,
+      },
+    );
+    expect(begun.ok).toBe(true);
+    if (!begun.ok) return;
+
+    const running = begun.run();
+    await delay(20);
+    const msgs = workspace.listMessages(project.id);
+    const last = msgs.at(-1);
+    expect(last?.role).toBe("assistant");
+    expect(last?.content).toBe(ASSISTANT_PLACEHOLDER);
+    resolveGate();
+    await running;
   });
 });

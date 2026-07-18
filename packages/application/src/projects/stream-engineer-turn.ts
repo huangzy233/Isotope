@@ -3,9 +3,15 @@ import type { CoderAgent } from "@isotope/agents";
 import type { LlmClient } from "@isotope/llm";
 import type { PreviewService } from "@isotope/preview";
 import type { MessageProcess, WorkspaceStore } from "@isotope/workspace";
+import { checkpointProcess } from "./checkpoint-process.js";
 import { enqueuePreviewBuild } from "./enqueue-preview-build.js";
 import { getProject } from "./get-project.js";
 import { ASSISTANT_PLACEHOLDER } from "./placeholder.js";
+import {
+  destroyTurnHub,
+  ensureTurnHub,
+  publishTurnEvent,
+} from "./turn-hub.js";
 import { releaseTurnLock, tryAcquireTurnLock } from "./turn-lock.js";
 
 export type EngineerTurnEvent =
@@ -53,7 +59,7 @@ export type BeginEngineerTurnResult =
   | { ok: false; status: "not_found" | "bad_request" | "conflict" }
   | {
       ok: true;
-      run: (emit: (event: EngineerTurnEvent) => void) => Promise<void>;
+      run: () => Promise<void>;
     };
 
 /** 同步：归属 / 占位或 content 校验 / 加锁。失败不持锁。成功后必须调用 run（run 的 finally 释放锁）。 */
@@ -93,6 +99,8 @@ export function beginEngineerTurn(
     return { ok: false, status: "conflict" };
   }
 
+  ensureTurnHub(input.projectId);
+
   // send：加锁成功后再清理遗留占位并 append user，避免 conflict 时脏写
   if (input.action === "send") {
     for (const m of deps.workspace.listMessages(input.projectId)) {
@@ -107,11 +115,20 @@ export function beginEngineerTurn(
       role: "user",
       content: input.content.trim(),
     });
+    replaceId = deps.workspace.appendMessage({
+      projectId: input.projectId,
+      role: "assistant",
+      content: ASSISTANT_PLACEHOLDER,
+      agentName: "Alex",
+    }).id;
   }
 
   return {
     ok: true,
-    run: async (emit) => {
+    run: async () => {
+      const publish = (event: EngineerTurnEvent) =>
+        publishTurnEvent(input.projectId, event);
+
       try {
         const history = deps.workspace
           .listMessages(input.projectId)
@@ -132,6 +149,11 @@ export function beginEngineerTurn(
         };
 
         const process: MessageProcess = { steps: [] };
+        const checkpoint = () => {
+          if (replaceId) {
+            checkpointProcess(deps.workspace, replaceId, process);
+          }
+        };
 
         try {
           const result = await runTurn({
@@ -140,15 +162,16 @@ export function beginEngineerTurn(
             port,
             history,
             maxToolRounds: deps.maxToolRounds,
-            onToken: (text) => emit({ type: "token", text }),
+            onToken: (text) => publish({ type: "token", text }),
             onThinking: (text) => {
               const last = process.steps.at(-1);
               if (last?.type === "thinking") {
                 last.text += text;
               } else {
                 process.steps.push({ type: "thinking", text });
+                checkpoint();
               }
-              emit({ type: "thinking", text });
+              publish({ type: "thinking", text });
             },
             onTool: (ev) => {
               if (ev.state === "start") {
@@ -183,7 +206,8 @@ export function beginEngineerTurn(
                   });
                 }
               }
-              emit({
+              checkpoint();
+              publish({
                 type: "tool",
                 id: ev.id,
                 name: ev.name,
@@ -192,7 +216,7 @@ export function beginEngineerTurn(
                 ok: ev.ok,
               });
             },
-            onStatus: (phase) => emit({ type: "status", phase }),
+            onStatus: (phase) => publish({ type: "status", phase }),
           });
 
           const text = result.assistantText || "（无回复内容）";
@@ -225,7 +249,7 @@ export function beginEngineerTurn(
             );
             previewEnqueued = true;
           }
-          emit({
+          publish({
             type: "done",
             messageId,
             filesChanged: result.filesChanged,
@@ -249,9 +273,10 @@ export function beginEngineerTurn(
               ...failurePatch,
             });
           }
-          emit({ type: "error", message: msg });
+          publish({ type: "error", message: msg });
         }
       } finally {
+        destroyTurnHub(input.projectId);
         releaseTurnLock(input.projectId);
       }
     },
