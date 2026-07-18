@@ -34,3 +34,8 @@ export { startTaskWatchdog } from "./projects/task-watchdog.js";
 export { isTurnLocked } from "./projects/turn-lock.js";
 export { updateProjectMode } from "./projects/update-project-mode.js";
 export { listTasks } from "./projects/list-tasks.js";
+export { listWorkspaceSourceFiles } from "./projects/list-workspace-source-files.js";
+export {
+  isNoisyWorkspacePath,
+  NOISY_WORKSPACE_SEGMENTS,
+} from "./projects/workspace-source-noise.js";
