@@ -23,6 +23,26 @@ export type MessageProcessStep =
 
 export type MessageProcess = { steps: MessageProcessStep[] };
 
+export type TaskStatus =
+  | "pending"
+  | "assigned"
+  | "running"
+  | "completed"
+  | "failed";
+
+export type Task = {
+  id: string;
+  projectId: string;
+  title: string;
+  assignee: "Alex";
+  status: TaskStatus;
+  createdByMessageId?: string;
+  assigneeMessageId?: string;
+  createdAt: string;
+  updatedAt: string;
+  lastProgressAt: string;
+};
+
 export type Message = {
   id: string;
   projectId: string;
@@ -31,4 +51,5 @@ export type Message = {
   createdAt: string;
   agentName?: string;
   process?: MessageProcess;
+  taskId?: string;
 };

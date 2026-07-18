@@ -5,6 +5,8 @@ export type {
   MessageRole,
   Project,
   ProjectMode,
+  Task,
+  TaskStatus,
 } from "./domain/types.js";
 export { deriveProjectName } from "./domain/project-name.js";
 export {

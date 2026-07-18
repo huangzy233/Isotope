@@ -7,6 +7,8 @@ import type {
   MessageRole,
   Project,
   ProjectMode,
+  Task,
+  TaskStatus,
 } from "../domain/types.js";
 import { resolveWorkspaceRelativePath } from "../domain/paths.js";
 import { openWorkspaceDatabase } from "../infra/db.js";
@@ -41,12 +43,40 @@ export type WorkspaceStore = {
     content: string;
     agentName?: string;
     process?: MessageProcess;
+    taskId?: string | null;
   }): Message;
   updateMessage(
     messageId: string,
-    patch: { content?: string; process?: MessageProcess | null },
+    patch: {
+      content?: string;
+      process?: MessageProcess | null;
+      taskId?: string | null;
+    },
   ): Message | null;
   listMessages(projectId: string): Message[];
+  createTask(input: {
+    projectId: string;
+    title: string;
+    assignee: "Alex";
+    status?: TaskStatus;
+    createdByMessageId?: string;
+  }): Task;
+  updateTask(
+    taskId: string,
+    patch: Partial<
+      Pick<
+        Task,
+        | "title"
+        | "status"
+        | "assigneeMessageId"
+        | "createdByMessageId"
+        | "lastProgressAt"
+      >
+    >,
+  ): Task | null;
+  getTask(taskId: string): Task | null;
+  listTasks(projectId: string): Task[];
+  listTasksByStatus(statuses: TaskStatus[]): Task[];
   deleteProject(id: string): void;
   readFile(projectId: string, relativePath: string): string;
   writeFile(projectId: string, relativePath: string, content: string): void;
@@ -70,6 +100,20 @@ type MessageRow = {
   created_at: string;
   agent_name: string | null;
   process_json: string | null;
+  task_id: string | null;
+};
+
+type TaskRow = {
+  id: string;
+  project_id: string;
+  title: string;
+  assignee: "Alex";
+  status: TaskStatus;
+  created_by_message_id: string | null;
+  assignee_message_id: string | null;
+  created_at: string;
+  updated_at: string;
+  last_progress_at: string;
 };
 
 function parseProcessJson(
@@ -85,7 +129,7 @@ function parseProcessJson(
   }
 }
 
-function randomId(prefix: "proj_" | "msg_"): string {
+function randomId(prefix: "proj_" | "msg_" | "task_"): string {
   return (
     prefix + crypto.randomUUID().replaceAll("-", "").slice(0, 16)
   );
@@ -112,6 +156,26 @@ function toMessage(row: MessageRow): Message {
     createdAt: row.created_at,
     ...(row.agent_name === null ? {} : { agentName: row.agent_name }),
     ...(process === undefined ? {} : { process }),
+    ...(row.task_id === null ? {} : { taskId: row.task_id }),
+  };
+}
+
+function toTask(row: TaskRow): Task {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    title: row.title,
+    assignee: row.assignee,
+    status: row.status,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    lastProgressAt: row.last_progress_at,
+    ...(row.created_by_message_id === null
+      ? {}
+      : { createdByMessageId: row.created_by_message_id }),
+    ...(row.assignee_message_id === null
+      ? {}
+      : { assigneeMessageId: row.assignee_message_id }),
   };
 }
 
@@ -215,13 +279,16 @@ export function createFsSqliteWorkspace(opts: {
         createdAt: now,
         ...(input.agentName === undefined ? {} : { agentName: input.agentName }),
         ...(input.process === undefined ? {} : { process: input.process }),
+        ...(input.taskId === undefined || input.taskId === null
+          ? {}
+          : { taskId: input.taskId }),
       };
       const insertAndTouchProject = database.transaction(() => {
         database
           .prepare(
             `INSERT INTO messages
-              (id, project_id, role, content, created_at, agent_name, process_json)
-             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+              (id, project_id, role, content, created_at, agent_name, process_json, task_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
           )
           .run(
             message.id,
@@ -231,6 +298,7 @@ export function createFsSqliteWorkspace(opts: {
             message.createdAt,
             message.agentName ?? null,
             input.process ? JSON.stringify(input.process) : null,
+            input.taskId ?? null,
           );
         database
           .prepare("UPDATE projects SET updated_at = ? WHERE id = ?")
@@ -243,7 +311,7 @@ export function createFsSqliteWorkspace(opts: {
     updateMessage(messageId, patch) {
       const row = database
         .prepare(
-          `SELECT id, project_id, role, content, created_at, agent_name, process_json
+          `SELECT id, project_id, role, content, created_at, agent_name, process_json, task_id
            FROM messages WHERE id = ?`,
         )
         .get(messageId) as MessageRow | undefined;
@@ -255,12 +323,16 @@ export function createFsSqliteWorkspace(opts: {
         processJson =
           patch.process === null ? null : JSON.stringify(patch.process);
       }
+      let taskId = row.task_id;
+      if (patch.taskId !== undefined) {
+        taskId = patch.taskId;
+      }
       database.transaction(() => {
         database
           .prepare(
-            `UPDATE messages SET content = ?, process_json = ? WHERE id = ?`,
+            `UPDATE messages SET content = ?, process_json = ?, task_id = ? WHERE id = ?`,
           )
-          .run(content, processJson, messageId);
+          .run(content, processJson, taskId, messageId);
         database
           .prepare(`UPDATE projects SET updated_at = ? WHERE id = ?`)
           .run(now, row.project_id);
@@ -269,19 +341,155 @@ export function createFsSqliteWorkspace(opts: {
         ...row,
         content,
         process_json: processJson,
+        task_id: taskId,
       });
     },
 
     listMessages(projectId) {
       const rows = database
         .prepare(
-          `SELECT id, project_id, role, content, created_at, agent_name, process_json
+          `SELECT id, project_id, role, content, created_at, agent_name, process_json, task_id
            FROM messages
            WHERE project_id = ?
            ORDER BY created_at ASC`,
         )
         .all(projectId) as MessageRow[];
       return rows.map(toMessage);
+    },
+
+    createTask(input) {
+      const now = new Date().toISOString();
+      const task: Task = {
+        id: randomId("task_"),
+        projectId: input.projectId,
+        title: input.title,
+        assignee: input.assignee,
+        status: input.status ?? "assigned",
+        createdAt: now,
+        updatedAt: now,
+        lastProgressAt: now,
+        ...(input.createdByMessageId === undefined
+          ? {}
+          : { createdByMessageId: input.createdByMessageId }),
+      };
+      database
+        .prepare(
+          `INSERT INTO tasks
+            (id, project_id, title, assignee, status, created_by_message_id,
+             assignee_message_id, created_at, updated_at, last_progress_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          task.id,
+          task.projectId,
+          task.title,
+          task.assignee,
+          task.status,
+          task.createdByMessageId ?? null,
+          task.assigneeMessageId ?? null,
+          task.createdAt,
+          task.updatedAt,
+          task.lastProgressAt,
+        );
+      return task;
+    },
+
+    updateTask(taskId, patch) {
+      const row = database
+        .prepare(
+          `SELECT id, project_id, title, assignee, status, created_by_message_id,
+                  assignee_message_id, created_at, updated_at, last_progress_at
+           FROM tasks WHERE id = ?`,
+        )
+        .get(taskId) as TaskRow | undefined;
+      if (!row) return null;
+
+      const now = new Date().toISOString();
+      const title = patch.title ?? row.title;
+      const status = patch.status ?? row.status;
+      const createdByMessageId =
+        patch.createdByMessageId !== undefined
+          ? patch.createdByMessageId
+          : row.created_by_message_id;
+      const assigneeMessageId =
+        patch.assigneeMessageId !== undefined
+          ? patch.assigneeMessageId
+          : row.assignee_message_id;
+      const statusChanged = patch.status !== undefined && patch.status !== row.status;
+      const lastProgressAt =
+        patch.lastProgressAt !== undefined
+          ? patch.lastProgressAt
+          : statusChanged
+            ? now
+            : row.last_progress_at;
+
+      database
+        .prepare(
+          `UPDATE tasks
+           SET title = ?, status = ?, created_by_message_id = ?,
+               assignee_message_id = ?, updated_at = ?, last_progress_at = ?
+           WHERE id = ?`,
+        )
+        .run(
+          title,
+          status,
+          createdByMessageId,
+          assigneeMessageId,
+          now,
+          lastProgressAt,
+          taskId,
+        );
+
+      return toTask({
+        ...row,
+        title,
+        status,
+        created_by_message_id: createdByMessageId,
+        assignee_message_id: assigneeMessageId,
+        updated_at: now,
+        last_progress_at: lastProgressAt,
+      });
+    },
+
+    getTask(taskId) {
+      const row = database
+        .prepare(
+          `SELECT id, project_id, title, assignee, status, created_by_message_id,
+                  assignee_message_id, created_at, updated_at, last_progress_at
+           FROM tasks WHERE id = ?`,
+        )
+        .get(taskId) as TaskRow | undefined;
+      return row === undefined ? null : toTask(row);
+    },
+
+    listTasks(projectId) {
+      const rows = database
+        .prepare(
+          `SELECT id, project_id, title, assignee, status, created_by_message_id,
+                  assignee_message_id, created_at, updated_at, last_progress_at
+           FROM tasks
+           WHERE project_id = ?
+           ORDER BY created_at ASC`,
+        )
+        .all(projectId) as TaskRow[];
+      return rows.map(toTask);
+    },
+
+    listTasksByStatus(statuses) {
+      if (statuses.length === 0) {
+        return [];
+      }
+      const placeholders = statuses.map(() => "?").join(", ");
+      const rows = database
+        .prepare(
+          `SELECT id, project_id, title, assignee, status, created_by_message_id,
+                  assignee_message_id, created_at, updated_at, last_progress_at
+           FROM tasks
+           WHERE status IN (${placeholders})
+           ORDER BY created_at ASC`,
+        )
+        .all(...statuses) as TaskRow[];
+      return rows.map(toTask);
     },
 
     deleteProject(id) {
@@ -295,6 +503,7 @@ export function createFsSqliteWorkspace(opts: {
         throw new Error("Invalid path");
       }
       const tx = database.transaction(() => {
+        database.prepare("DELETE FROM tasks WHERE project_id = ?").run(id);
         database.prepare("DELETE FROM messages WHERE project_id = ?").run(id);
         database.prepare("DELETE FROM projects WHERE id = ?").run(id);
       });

@@ -36,5 +36,28 @@ export function openWorkspaceDatabase(dataRoot: string): Database.Database {
   if (!cols.some((c) => c.name === "process_json")) {
     database.exec(`ALTER TABLE messages ADD COLUMN process_json TEXT`);
   }
+  if (!cols.some((c) => c.name === "task_id")) {
+    database.exec(`ALTER TABLE messages ADD COLUMN task_id TEXT`);
+  }
+
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS tasks (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL,
+      title TEXT NOT NULL,
+      assignee TEXT NOT NULL,
+      status TEXT NOT NULL,
+      created_by_message_id TEXT,
+      assignee_message_id TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      last_progress_at TEXT NOT NULL,
+      FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_tasks_project
+      ON tasks(project_id);
+    CREATE INDEX IF NOT EXISTS idx_tasks_status
+      ON tasks(status);
+  `);
   return database;
 }

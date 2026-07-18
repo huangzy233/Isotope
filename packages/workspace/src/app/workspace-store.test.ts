@@ -199,4 +199,39 @@ describe("createFsSqliteWorkspace", () => {
     });
     expect(store.listMessages(p.id)[0]?.process).toBeUndefined();
   });
+
+  it("createTask / updateTask / listTasks and cascade on deleteProject", () => {
+    const p = store.createProject({
+      ownerUserId: "demo",
+      name: "x",
+      mode: "team",
+    });
+    const mike = store.appendMessage({
+      projectId: p.id,
+      role: "assistant",
+      content: "拆任务",
+      agentName: "Mike",
+    });
+    const task = store.createTask({
+      projectId: p.id,
+      title: "统一文案",
+      assignee: "Alex",
+      status: "assigned",
+      createdByMessageId: mike.id,
+    });
+    expect(task.status).toBe("assigned");
+    expect(task.assignee).toBe("Alex");
+    expect(store.listTasks(p.id)).toHaveLength(1);
+
+    const linked = store.updateMessage(mike.id, { taskId: task.id });
+    expect(linked?.taskId).toBe(task.id);
+
+    const running = store.updateTask(task.id, { status: "running" });
+    expect(running?.status).toBe("running");
+    expect(running?.lastProgressAt).toBeTruthy();
+
+    store.deleteProject(p.id);
+    expect(store.getTask(task.id)).toBeNull();
+    expect(store.listTasks(p.id)).toEqual([]);
+  });
 });
