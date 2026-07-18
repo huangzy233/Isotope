@@ -104,14 +104,36 @@ export async function POST(request: Request, context: RouteContext) {
       };
       try {
         await begun.run((ev) => {
-          if (ev.type === "token") send("token", { text: ev.text });
-          else if (ev.type === "done") {
-            send("done", {
-              messageId: ev.messageId,
-              filesChanged: ev.filesChanged,
-              previewEnqueued: ev.previewEnqueued,
-            });
-          } else send("error", { message: ev.message });
+          switch (ev.type) {
+            case "status":
+              send("status", { phase: ev.phase });
+              break;
+            case "thinking":
+              send("thinking", { text: ev.text });
+              break;
+            case "tool":
+              send("tool", {
+                id: ev.id,
+                name: ev.name,
+                state: ev.state,
+                summary: ev.summary,
+                ...(ev.ok !== undefined ? { ok: ev.ok } : {}),
+              });
+              break;
+            case "token":
+              send("token", { text: ev.text });
+              break;
+            case "done":
+              send("done", {
+                messageId: ev.messageId,
+                filesChanged: ev.filesChanged,
+                previewEnqueued: ev.previewEnqueued,
+              });
+              break;
+            case "error":
+              send("error", { message: ev.message });
+              break;
+          }
         });
       } finally {
         controller.close();

@@ -13,6 +13,8 @@ import { Composer } from "@/components/composer";
 import { EmptyState } from "@/components/empty-state";
 import { PanelHeader } from "@/components/panel-header";
 import { StatusBadge } from "@/components/status-badge";
+import { CheckCircle2, ChevronUp } from "lucide-react";
+import { ToolCallGroup } from "@/components/tool-call-row";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
@@ -29,11 +31,24 @@ type PreviewSnapshot = {
   updatedAt: string;
 };
 
+type AgentStatus = "idle" | "thinking" | "running" | "streaming";
+
+type ToolStreamEvent = {
+  id: string;
+  name: string;
+  state: "start" | "end";
+  summary?: string;
+  ok?: boolean;
+};
+
 function clampChatPct(value: number) {
   return Math.min(MAX_CHAT_PCT, Math.max(MIN_CHAT_PCT, value));
 }
 
 type StreamHandlers = {
+  onStatus?: (phase: "thinking" | "running" | "streaming") => void;
+  onThinking?: (text: string) => void;
+  onTool?: (ev: ToolStreamEvent) => void;
   onToken: (text: string) => void;
   onDone: (data: {
     messageId: string;
@@ -47,6 +62,63 @@ type StreamHandlers = {
 const continueFlightByProject = new Map<string, { handlers: StreamHandlers }>();
 /** Projects with an open continue SSE body (409 from a duplicate continue is ignored). */
 const continueSseOpen = new Set<string>();
+
+function updateLastAssistant(
+  prev: Message[],
+  updater: (msg: Message) => Message,
+): Message[] {
+  const copy = [...prev];
+  const i = copy.length - 1;
+  if (!copy[i] || copy[i]!.role !== "assistant") return prev;
+  copy[i] = updater(copy[i]!);
+  return copy;
+}
+
+function mergeThinking(message: Message, text: string): Message {
+  const steps = [...(message.process?.steps ?? [])];
+  const last = steps.at(-1);
+  if (last?.type === "thinking") {
+    steps[steps.length - 1] = { type: "thinking", text: last.text + text };
+  } else {
+    steps.push({ type: "thinking", text });
+  }
+  return { ...message, process: { steps } };
+}
+
+function applyToolStep(message: Message, ev: ToolStreamEvent): Message {
+  const steps = [...(message.process?.steps ?? [])];
+  if (ev.state === "start") {
+    steps.push({
+      type: "tool",
+      id: ev.id,
+      name: ev.name,
+      status: "running",
+      summary: ev.summary,
+    });
+  } else {
+    const status = ev.ok === false ? "error" : "done";
+    const idx = steps.findIndex((s) => s.type === "tool" && s.id === ev.id);
+    if (idx >= 0 && steps[idx]?.type === "tool") {
+      const prev = steps[idx];
+      steps[idx] = {
+        type: "tool",
+        id: prev.id,
+        name: prev.name,
+        status,
+        summary: ev.summary ?? prev.summary,
+      };
+    } else {
+      steps.push({
+        type: "tool",
+        id: ev.id,
+        name: ev.name,
+        status,
+        summary: ev.summary,
+      });
+    }
+  }
+  return { ...message, process: { steps } };
+}
 
 async function consumeEngineerStream(
   projectId: string,
@@ -105,7 +177,30 @@ async function consumeEngineerStream(
           handlers.onError("连接中断，请重试");
           return;
         }
-        if (event === "token" && typeof data.text === "string") {
+        if (
+          event === "status" &&
+          (data.phase === "thinking" ||
+            data.phase === "running" ||
+            data.phase === "streaming")
+        ) {
+          handlers.onStatus?.(data.phase);
+        } else if (event === "thinking" && typeof data.text === "string") {
+          handlers.onThinking?.(data.text);
+        } else if (
+          event === "tool" &&
+          typeof data.id === "string" &&
+          typeof data.name === "string" &&
+          (data.state === "start" || data.state === "end")
+        ) {
+          handlers.onTool?.({
+            id: data.id,
+            name: data.name,
+            state: data.state,
+            summary:
+              typeof data.summary === "string" ? data.summary : undefined,
+            ok: typeof data.ok === "boolean" ? data.ok : undefined,
+          });
+        } else if (event === "token" && typeof data.text === "string") {
           handlers.onToken(data.text);
         } else if (event === "done") {
           terminal = true;
@@ -142,6 +237,7 @@ export function WorkbenchShell({
   const [messages, setMessages] = useState(initialMessages);
   const [draft, setDraft] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [agentStatus, setAgentStatus] = useState<AgentStatus>("idle");
   const [error, setError] = useState<string | null>(null);
   const [chatPct, setChatPct] = useState(DEFAULT_CHAT_PCT);
   const [dragging, setDragging] = useState(false);
@@ -260,6 +356,7 @@ export function WorkbenchShell({
     continuedRef.current = true;
     continueInFlightRef.current = true;
     setSubmitting(true);
+    setAgentStatus("thinking");
     setMessages((prev) => {
       const copy = [...prev];
       const i = copy.length - 1;
@@ -268,6 +365,19 @@ export function WorkbenchShell({
     });
 
     const handlers: StreamHandlers = {
+      onStatus: (phase) => {
+        setAgentStatus(phase);
+      },
+      onThinking: (text) => {
+        setMessages((prev) =>
+          updateLastAssistant(prev, (m) => mergeThinking(m, text)),
+        );
+      },
+      onTool: (ev) => {
+        setMessages((prev) =>
+          updateLastAssistant(prev, (m) => applyToolStep(m, ev)),
+        );
+      },
       onToken: (text) => {
         setMessages((prev) => {
           const copy = [...prev];
@@ -286,6 +396,7 @@ export function WorkbenchShell({
           copy[i] = { ...copy[i]!, id: data.messageId };
           return copy;
         });
+        setAgentStatus("idle");
         setSubmitting(false);
         continueInFlightRef.current = false;
         if (data.previewEnqueued) void fetchPreview(false);
@@ -306,6 +417,7 @@ export function WorkbenchShell({
           }
           return copy;
         });
+        setAgentStatus("idle");
         setSubmitting(false);
         continueInFlightRef.current = false;
       },
@@ -320,6 +432,12 @@ export function WorkbenchShell({
 
     continueFlightByProject.set(project.id, { handlers });
     void consumeEngineerStream(project.id, { action: "continue" }, {
+      onStatus: (phase) =>
+        continueFlightByProject.get(project.id)?.handlers.onStatus?.(phase),
+      onThinking: (text) =>
+        continueFlightByProject.get(project.id)?.handlers.onThinking?.(text),
+      onTool: (ev) =>
+        continueFlightByProject.get(project.id)?.handlers.onTool?.(ev),
       onToken: (text) =>
         continueFlightByProject.get(project.id)?.handlers.onToken(text),
       onDone: (data) => {
@@ -346,6 +464,7 @@ export function WorkbenchShell({
     if (!draft.trim() || submitting) return;
     const content = draft.trim();
     setSubmitting(true);
+    setAgentStatus("thinking");
     setError(null);
     setDraft("");
     const tempUser = {
@@ -369,6 +488,19 @@ export function WorkbenchShell({
       project.id,
       { action: "send", content },
       {
+        onStatus: (phase) => {
+          setAgentStatus(phase);
+        },
+        onThinking: (text) => {
+          setMessages((prev) =>
+            updateLastAssistant(prev, (m) => mergeThinking(m, text)),
+          );
+        },
+        onTool: (ev) => {
+          setMessages((prev) =>
+            updateLastAssistant(prev, (m) => applyToolStep(m, ev)),
+          );
+        },
         onToken: (text) => {
           setMessages((prev) => {
             const copy = [...prev];
@@ -389,6 +521,7 @@ export function WorkbenchShell({
             };
             return copy;
           });
+          setAgentStatus("idle");
           setSubmitting(false);
           if (data.previewEnqueued) void fetchPreview(false);
         },
@@ -405,6 +538,7 @@ export function WorkbenchShell({
             }
             return copy;
           });
+          setAgentStatus("idle");
           setSubmitting(false);
         },
       },
@@ -414,6 +548,8 @@ export function WorkbenchShell({
   const chatWidthStyle = {
     ["--chat-pct" as string]: `${chatPct}%`,
   } as CSSProperties;
+
+  const lastMessageId = messages.at(-1)?.id;
 
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col">
@@ -425,7 +561,7 @@ export function WorkbenchShell({
         <section className="flex min-h-[50vh] w-full min-w-0 flex-col border-b border-border xl:min-h-0 xl:w-[var(--chat-pct)] xl:shrink-0 xl:border-b-0">
           <PanelHeader
             title="对话"
-            trailing={<StatusBadge status="idle" />}
+            trailing={<StatusBadge status={agentStatus} />}
           />
           <div className="flex flex-1 flex-col overflow-y-auto p-4">
             {messages.length === 0 ? (
@@ -438,7 +574,21 @@ export function WorkbenchShell({
             ) : (
               <ul className="flex flex-col gap-3">
                 {messages.map((message) => (
-                  <MessageRow key={message.id} message={message} />
+                  <MessageRow
+                    key={message.id}
+                    message={message}
+                    thinkingOpen={
+                      message.id === lastMessageId &&
+                      message.role === "assistant" &&
+                      agentStatus !== "idle"
+                    }
+                    showContentSkeleton={
+                      message.id === lastMessageId &&
+                      message.role === "assistant" &&
+                      !message.content &&
+                      agentStatus !== "idle"
+                    }
+                  />
                 ))}
               </ul>
             )}
@@ -556,28 +706,130 @@ export function WorkbenchShell({
   );
 }
 
-function MessageRow({ message }: { message: Message }) {
+function MessageRow({
+  message,
+  thinkingOpen = false,
+  showContentSkeleton = false,
+}: {
+  message: Message;
+  thinkingOpen?: boolean;
+  showContentSkeleton?: boolean;
+}) {
   const isUser = message.role === "user";
   const label = isUser ? "你" : (message.agentName ?? "Alex");
 
+  if (isUser) {
+    return (
+      <li className="ml-8 flex flex-col items-end gap-1">
+        <p className="text-xs text-muted-foreground">{label}</p>
+        <div className="rounded-lg bg-muted px-3 py-2 text-sm text-foreground">
+          <p className="whitespace-pre-wrap leading-relaxed">{message.content}</p>
+        </div>
+      </li>
+    );
+  }
+
+  const steps = message.process?.steps ?? [];
+  const phases = groupProcessPhases(steps);
+  const stepCount = phases.length;
+
   return (
-    <li
-      className={
-        isUser
-          ? "ml-8 flex flex-col items-end gap-1"
-          : "mr-8 flex flex-col items-start gap-1"
-      }
-    >
+    <li className="mr-8 flex flex-col items-start gap-1">
       <p className="text-xs text-muted-foreground">{label}</p>
-      <div
-        className={
-          isUser
-            ? "rounded-lg bg-muted px-3 py-2 text-sm text-foreground"
-            : "rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground"
-        }
-      >
-        <p className="whitespace-pre-wrap leading-relaxed">{message.content}</p>
+      <div className="rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground">
+        {stepCount > 0 ? (
+          <details className="group mb-2" open={thinkingOpen}>
+            <summary className="flex cursor-pointer list-none items-center gap-2 text-xs text-muted-foreground [&::-webkit-details-marker]:hidden">
+              {/* Check sits on the same vertical axis as the dashed rail */}
+              <CheckCircle2
+                aria-hidden
+                className="size-3.5 shrink-0 text-muted-foreground"
+              />
+              <span className="min-w-0 flex-1">已处理 {stepCount} 步</span>
+              <ChevronUp
+                aria-hidden
+                className="size-3.5 shrink-0 transition-transform duration-150 group-open:rotate-0 -rotate-180"
+              />
+            </summary>
+            {/* ml-[7px] = half of size-3.5 so rail centers under the check */}
+            <div className="relative ml-[7px] mt-2">
+              <div
+                aria-hidden
+                className="absolute bottom-2 left-0 top-0 border-l border-dashed border-border/70"
+              />
+              <ol className="space-y-5 pl-4">
+                {phases.map((phase) => (
+                  <li key={phase.key} className="relative space-y-1.5">
+                    <span
+                      aria-hidden
+                      className="absolute -left-4 top-1.5 size-1.5 -translate-x-1/2 rounded-full bg-muted-foreground/45 ring-2 ring-card"
+                    />
+                    {phase.thinking ? (
+                      <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground/80">
+                        {phase.thinking}
+                      </p>
+                    ) : null}
+                    {phase.tools.length > 0 ? (
+                      <ToolCallGroup tools={phase.tools} />
+                    ) : null}
+                  </li>
+                ))}
+              </ol>
+            </div>
+          </details>
+        ) : null}
+
+        {message.content ? (
+          <p className="whitespace-pre-wrap leading-relaxed text-foreground">
+            {message.content}
+          </p>
+        ) : showContentSkeleton ? (
+          <Skeleton className="h-4 w-2/3" />
+        ) : null}
       </div>
     </li>
   );
+}
+
+type ToolProcessStep = Extract<
+  NonNullable<Message["process"]>["steps"][number],
+  { type: "tool" }
+>;
+
+type ProcessPhase = {
+  key: string;
+  thinking?: string;
+  tools: ToolProcessStep[];
+};
+
+/** Group consecutive thinking + following tools into one timeline step. */
+function groupProcessPhases(
+  steps: NonNullable<Message["process"]>["steps"],
+): ProcessPhase[] {
+  const phases: ProcessPhase[] = [];
+  let i = 0;
+  while (i < steps.length) {
+    const start = i;
+    const thinkingParts: string[] = [];
+    while (i < steps.length && steps[i]!.type === "thinking") {
+      thinkingParts.push(
+        (steps[i] as { type: "thinking"; text: string }).text,
+      );
+      i += 1;
+    }
+    const tools: ToolProcessStep[] = [];
+    while (i < steps.length && steps[i]!.type === "tool") {
+      tools.push(steps[i] as ToolProcessStep);
+      i += 1;
+    }
+    if (thinkingParts.length === 0 && tools.length === 0) break;
+    phases.push({
+      key: `phase-${start}`,
+      ...(thinkingParts.length > 0
+        ? { thinking: thinkingParts.join("\n") }
+        : {}),
+      tools,
+    });
+  }
+  return phases;
 }

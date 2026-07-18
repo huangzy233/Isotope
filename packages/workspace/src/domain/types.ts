@@ -11,6 +11,18 @@ export type Project = {
 
 export type MessageRole = "user" | "assistant" | "system";
 
+export type MessageProcessStep =
+  | { type: "thinking"; text: string }
+  | {
+      type: "tool";
+      id: string;
+      name: string;
+      status: "running" | "done" | "error";
+      summary?: string;
+    };
+
+export type MessageProcess = { steps: MessageProcessStep[] };
+
 export type Message = {
   id: string;
   projectId: string;
@@ -18,4 +30,5 @@ export type Message = {
   content: string;
   createdAt: string;
   agentName?: string;
+  process?: MessageProcess;
 };
