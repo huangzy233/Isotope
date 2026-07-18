@@ -42,6 +42,10 @@ export {
   type TurnHubListener,
 } from "./projects/turn-hub.js";
 export { updateProjectMode } from "./projects/update-project-mode.js";
+export {
+  resolveTurnKind,
+  type TurnKind,
+} from "./projects/resolve-turn-kind.js";
 export { listTasks } from "./projects/list-tasks.js";
 export { listWorkspaceSourceFiles } from "./projects/list-workspace-source-files.js";
 export {
