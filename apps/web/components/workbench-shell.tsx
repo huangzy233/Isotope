@@ -332,8 +332,7 @@ export function WorkbenchShell({
           : undefined;
         if (
           current &&
-          current.agentName &&
-          current.agentName !== data.agentName
+          (current.agentName ?? "Alex") !== data.agentName
         ) {
           return [
             ...prev,
@@ -940,13 +939,13 @@ function MessageRow({
   showContentSkeleton?: boolean;
 }) {
   const isUser = message.role === "user";
-  const agentName = message.agentName ?? "Alex";
-  const role = agentRoleLabel(message.agentName);
+  const effectiveName = message.agentName ?? "Alex";
+  const role = agentRoleLabel(effectiveName);
   const label = isUser
     ? "你"
     : role
-      ? `${agentName} | ${role}`
-      : agentName;
+      ? `${effectiveName} | ${role}`
+      : effectiveName;
 
   if (isUser) {
     return (
