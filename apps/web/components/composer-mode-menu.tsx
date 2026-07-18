@@ -1,6 +1,6 @@
 "use client";
 
-import { Users } from "lucide-react";
+import { Plus, Users } from "lucide-react";
 import type { ProjectMode } from "@isotope/workspace";
 import { Button } from "@/components/ui/button";
 import {
@@ -32,10 +32,9 @@ export function ComposerModeMenu({
           className="size-9 shrink-0"
           disabled={disabled}
           aria-label="模式与工具"
+          title="模式与工具"
         >
-          <span className="text-lg leading-none text-muted-foreground" aria-hidden>
-            +
-          </span>
+          <Plus className="size-4" aria-hidden />
         </Button>
       </PopoverTrigger>
       <PopoverContent side="top" align="start" className="w-64 p-1">
@@ -65,6 +64,15 @@ export function ComposerModeMenu({
             aria-label="团队模式"
           />
         </div>
+        {teamOn ? (
+          <p className="px-3 pb-2 text-xs text-muted-foreground">
+            当前：Team（Mike 分配任务）
+          </p>
+        ) : (
+          <p className="px-3 pb-2 text-xs text-muted-foreground">
+            当前：Engineer（Alex 直改）
+          </p>
+        )}
       </PopoverContent>
     </Popover>
   );
