@@ -1,0 +1,15 @@
+node_modules
+.dist
+.next
+.turbo
+.DS_Store
+*.log
+.env
+.env.*
+!.env.example
+
+# runtime workspace data (generated projects)
+data/projects/**
+!data/projects/.gitkeep
+data/**/node_modules
+data/**/build

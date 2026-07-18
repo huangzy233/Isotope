@@ -1,0 +1,10 @@
+{
+  "name": "@isotope/web",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "echo \"Next.js scaffold pending\"",
+    "build": "echo \"Next.js scaffold pending\"",
+    "typecheck": "echo \"pending\""
+  }
+}
