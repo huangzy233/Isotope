@@ -1,7 +1,7 @@
 # 设计：断线重连（进行中回合 / 任务状态恢复）
 
 - 日期：2026-07-18
-- 状态：已批准（实现计划：`docs/superpowers/plans/2026-07-18-disconnect-reconnect.md`）
+- 状态：已落地（实现计划见 `docs/superpowers/plans/2026-07-18-disconnect-reconnect.md`）
 - 前置：
   - [`2026-07-18-engineer-agent-turn-design.md`](./2026-07-18-engineer-agent-turn-design.md)
   - [`2026-07-18-agent-process-visibility-design.md`](./2026-07-18-agent-process-visibility-design.md)
