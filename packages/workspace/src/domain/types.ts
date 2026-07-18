@@ -52,4 +52,16 @@ export type Message = {
   agentName?: string;
   process?: MessageProcess;
   taskId?: string;
+  versionId?: string;
+  versionNumber?: number;
+};
+
+export type Version = {
+  id: string;
+  projectId: string;
+  number: number;
+  summary: string;
+  previewRevision: string | null;
+  snapshotRef: string | null;
+  createdAt: string;
 };

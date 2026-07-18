@@ -31,3 +31,7 @@ export function mikeSystemPromptPath(): string {
 export function mikeSummaryPromptPath(): string {
   return path.join(monorepoRoot(), "prompts/leader/mike-summary.v1.md");
 }
+
+export function versionSummaryPromptPath(): string {
+  return path.join(monorepoRoot(), "prompts/workspace/version-summary.v1.md");
+}

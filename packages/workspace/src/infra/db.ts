@@ -39,6 +39,31 @@ export function openWorkspaceDatabase(dataRoot: string): Database.Database {
   if (!cols.some((c) => c.name === "task_id")) {
     database.exec(`ALTER TABLE messages ADD COLUMN task_id TEXT`);
   }
+  if (!cols.some((c) => c.name === "version_id")) {
+    database.exec(`ALTER TABLE messages ADD COLUMN version_id TEXT`);
+  }
+
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS versions (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL,
+      number INTEGER NOT NULL,
+      summary TEXT NOT NULL,
+      preview_revision TEXT,
+      snapshot_ref TEXT,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+      UNIQUE (project_id, number)
+    );
+    CREATE INDEX IF NOT EXISTS idx_versions_project
+      ON versions(project_id, number);
+
+    CREATE TABLE IF NOT EXISTS pending_version_intents (
+      project_id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+    );
+  `);
 
   database.exec(`
     CREATE TABLE IF NOT EXISTS tasks (

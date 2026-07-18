@@ -234,4 +234,67 @@ describe("createFsSqliteWorkspace", () => {
     expect(store.getTask(task.id)).toBeNull();
     expect(store.listTasks(p.id)).toEqual([]);
   });
+
+  it("pending version intent upsert and take", () => {
+    const p = store.createProject({
+      ownerUserId: "demo",
+      name: "x",
+      mode: "engineer",
+    });
+    expect(store.takePendingVersionIntent(p.id)).toBe(false);
+    store.upsertPendingVersionIntent(p.id);
+    store.upsertPendingVersionIntent(p.id);
+    expect(store.takePendingVersionIntent(p.id)).toBe(true);
+    expect(store.takePendingVersionIntent(p.id)).toBe(false);
+  });
+
+  it("recordVersion increments and message joins versionNumber", () => {
+    const p = store.createProject({
+      ownerUserId: "demo",
+      name: "x",
+      mode: "engineer",
+    });
+    const v1 = store.recordVersion({
+      projectId: p.id,
+      summary: "统一首页文案",
+      previewRevision: "abc",
+    });
+    expect(v1.number).toBe(1);
+    expect(v1.summary).toBe("统一首页文案");
+    expect(v1.previewRevision).toBe("abc");
+    expect(v1.snapshotRef).toBeNull();
+
+    const v2 = store.recordVersion({
+      projectId: p.id,
+      summary: "调整按钮颜色",
+    });
+    expect(v2.number).toBe(2);
+
+    const msg = store.appendMessage({
+      projectId: p.id,
+      role: "system",
+      content: v1.summary,
+      versionId: v1.id,
+    });
+    expect(msg.versionId).toBe(v1.id);
+    expect(msg.versionNumber).toBe(1);
+
+    const listed = store.listMessages(p.id);
+    expect(listed[0]?.versionId).toBe(v1.id);
+    expect(listed[0]?.versionNumber).toBe(1);
+    expect(listed[0]?.content).toBe("统一首页文案");
+  });
+
+  it("deleteProject clears versions and pending intents", () => {
+    const p = store.createProject({
+      ownerUserId: "demo",
+      name: "x",
+      mode: "engineer",
+    });
+    store.upsertPendingVersionIntent(p.id);
+    store.recordVersion({ projectId: p.id, summary: "s" });
+    store.deleteProject(p.id);
+    expect(store.takePendingVersionIntent(p.id)).toBe(false);
+    expect(store.listVersions(p.id)).toEqual([]);
+  });
 });

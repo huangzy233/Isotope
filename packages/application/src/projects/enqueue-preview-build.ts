@@ -6,9 +6,13 @@ export function enqueuePreviewBuild(
   input: { ownerUserId: string; projectId: string },
   workspace: WorkspaceStore,
   preview: PreviewService,
+  opts?: { recordVersionIntent?: boolean },
 ): PreviewStatusSnapshot | null {
   if (!getProject(input, workspace)) {
     return null;
+  }
+  if (opts?.recordVersionIntent) {
+    workspace.upsertPendingVersionIntent(input.projectId);
   }
   return preview.enqueueBuild(input.projectId);
 }

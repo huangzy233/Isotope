@@ -7,6 +7,7 @@ export type {
   ProjectMode,
   Task,
   TaskStatus,
+  Version,
 } from "./domain/types.js";
 export { deriveProjectName } from "./domain/project-name.js";
 export {

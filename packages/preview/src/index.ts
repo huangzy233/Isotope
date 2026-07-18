@@ -1,4 +1,6 @@
 export type {
+  BuildCompleteResult,
+  OnBuildComplete,
   PreviewAsset,
   PreviewService,
   PreviewStatus,

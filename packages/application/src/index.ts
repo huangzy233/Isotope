@@ -9,6 +9,7 @@ export { appendMessage } from "./projects/append-message.js";
 export { deleteProject } from "./projects/delete-project.js";
 export { getPreviewStatus } from "./projects/get-preview-status.js";
 export { enqueuePreviewBuild } from "./projects/enqueue-preview-build.js";
+export { handlePreviewBuildComplete } from "./projects/record-version-on-build.js";
 export { readPreviewAsset } from "./projects/read-preview-asset.js";
 export {
   beginEngineerTurn,
