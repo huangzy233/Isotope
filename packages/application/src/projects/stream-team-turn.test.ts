@@ -65,6 +65,7 @@ function teamDeps(
     preview,
     llm,
     leader: createLeaderAgent({ systemPrompt: "mike-test" }),
+    leaderSummaryPrompt: "用一句话总结已完成的任务，不要调用工具。",
     coder: createCoderAgent({ systemPrompt: "alex-test" }),
     bus: createTaskEventBus(),
     maxToolRounds: 8,
@@ -136,6 +137,10 @@ describe("beginTeamTurn", () => {
             { type: "content_delta", text: "标题已更新" },
             { type: "finished", finishReason: "stop" },
           ],
+          [
+            { type: "content_delta", text: "本轮任务已全部完成，标题已按要求更新。" },
+            { type: "finished", finishReason: "stop" },
+          ],
         ]),
         preview,
       ),
@@ -146,9 +151,10 @@ describe("beginTeamTurn", () => {
     await begun.run((ev) => events.push(ev));
 
     const speakers = events.filter((e) => e.type === "speaker");
-    expect(speakers).toHaveLength(2);
+    expect(speakers).toHaveLength(3);
     expect(speakers[0]).toMatchObject({ agentName: "Mike" });
     expect(speakers[1]).toMatchObject({ agentName: "Alex" });
+    expect(speakers[2]).toMatchObject({ agentName: "Mike" });
 
     const taskEvents = events.filter((e) => e.type === "task");
     expect(taskEvents.some((e) => e.type === "task" && e.status === "assigned")).toBe(
@@ -175,10 +181,15 @@ describe("beginTeamTurn", () => {
     });
 
     const after = workspace.listMessages(project.id);
-    expect(after.at(-1)?.agentName).toBe("Alex");
-    expect(after.at(-1)?.content).toBe("标题已更新");
+    expect(after.at(-1)?.agentName).toBe("Mike");
+    expect(after.at(-1)?.content).toBe(
+      "本轮任务已全部完成，标题已按要求更新。",
+    );
     expect(
       after.some((m) => m.agentName === "Mike" && m.content === "已指派给 Alex"),
+    ).toBe(true);
+    expect(
+      after.some((m) => m.agentName === "Alex" && m.content === "标题已更新"),
     ).toBe(true);
   });
 
@@ -369,6 +380,10 @@ describe("beginTeamTurn", () => {
           { type: "content_delta", text: "已改好" },
           { type: "finished", finishReason: "stop" },
         ],
+        [
+          { type: "content_delta", text: "任务已完成，可以继续提需求。" },
+          { type: "finished", finishReason: "stop" },
+        ],
       ]),
     );
 
@@ -383,6 +398,9 @@ describe("beginTeamTurn", () => {
       .find((m) => m.id === updated?.assigneeMessageId);
     expect(alexMsg?.agentName).toBe("Alex");
     expect(alexMsg?.content).toBe("已改好");
+    const last = workspace.listMessages(project.id).at(-1);
+    expect(last?.agentName).toBe("Mike");
+    expect(last?.content).toBe("任务已完成，可以继续提需求。");
   });
 
   it("retryStuckAssignedTask conflict advances lastProgressAt", async () => {

@@ -10,6 +10,7 @@ import { createOpenAiCompatibleClient, type LlmClient } from "@isotope/llm";
 import {
   alexSystemPromptPath,
   llmConfigPath,
+  mikeSummaryPromptPath,
   mikeSystemPromptPath,
 } from "./paths";
 
@@ -57,15 +58,18 @@ export function createTurnDeps(): {
 export function createTeamTurnDeps(): {
   llm: LlmClient;
   leader: LeaderAgent;
+  leaderSummaryPrompt: string;
   coder: CoderAgent;
   maxToolRounds: number;
 } {
   const { llm, maxToolRounds } = createSharedLlm();
   const mikePrompt = readFileSync(mikeSystemPromptPath(), "utf8");
+  const mikeSummaryPrompt = readFileSync(mikeSummaryPromptPath(), "utf8");
   const alexPrompt = readFileSync(alexSystemPromptPath(), "utf8");
   return {
     llm,
     leader: createLeaderAgent({ systemPrompt: mikePrompt }),
+    leaderSummaryPrompt: mikeSummaryPrompt,
     coder: createCoderAgent({ systemPrompt: alexPrompt }),
     maxToolRounds,
   };

@@ -49,10 +49,24 @@ export type TeamTurnDeps = {
   preview: PreviewService;
   llm: LlmClient;
   leader: LeaderAgent;
+  /** Mike 收尾总结用 system prompt（无工具）；外置 prompts/leader/mike-summary.v1.md */
+  leaderSummaryPrompt: string;
   coder: CoderAgent;
   bus: TaskEventBus;
   maxToolRounds: number;
 };
+
+const OPEN_TASK_STATUSES = new Set<TaskStatus>([
+  "pending",
+  "assigned",
+  "running",
+]);
+
+function hasOpenTasks(workspace: WorkspaceStore, projectId: string): boolean {
+  return workspace
+    .listTasks(projectId)
+    .some((t) => OPEN_TASK_STATUSES.has(t.status));
+}
 
 export type BeginTeamTurnResult =
   | { ok: false; status: "not_found" | "bad_request" | "conflict" }
@@ -297,6 +311,71 @@ async function runAlexForTask(input: {
   }
 }
 
+/** 项目内无进行中任务时，追加一条 Mike 收尾总结（旁路、无工具）。 */
+async function maybeRunMikeSummary(input: {
+  projectId: string;
+  deps: TeamTurnDeps;
+  emit?: (event: TeamTurnEvent) => void;
+}): Promise<string | null> {
+  const { projectId, deps, emit } = input;
+  if (hasOpenTasks(deps.workspace, projectId)) {
+    return null;
+  }
+
+  const summaryMsg = deps.workspace.appendMessage({
+    projectId,
+    role: "assistant",
+    content: "",
+    agentName: "Mike",
+  });
+  emit?.({
+    type: "speaker",
+    agentName: "Mike",
+    messageId: summaryMsg.id,
+  });
+
+  const process: MessageProcess = { steps: [] };
+  const callbacks = emit
+    ? trackProcess(process, emit)
+    : {
+        onToken: () => {},
+        onThinking: () => {},
+        onTool: () => {},
+        onStatus: () => {},
+      };
+
+  const summaryAgent = {
+    displayName: "Mike" as const,
+    systemPrompt: deps.leaderSummaryPrompt,
+    tools: [] as LeaderAgent["tools"],
+    executeTool: () =>
+      ({ ok: false as const, error: "总结回合不可调用工具" }),
+  };
+
+  try {
+    const result = await runTurn({
+      llm: deps.llm,
+      agent: summaryAgent,
+      port: {},
+      history: historyForProject(deps.workspace, projectId),
+      maxToolRounds: Math.min(2, deps.maxToolRounds),
+      ...callbacks,
+    });
+    const text = result.assistantText.trim() || "本轮任务已全部完成。";
+    deps.workspace.updateMessage(summaryMsg.id, {
+      content: text,
+      process: result.process,
+    });
+  } catch (err) {
+    const msg =
+      "总结生成失败：" +
+      (err instanceof Error ? err.message : "未知错误").slice(0, 300);
+    deps.workspace.updateMessage(summaryMsg.id, { content: msg });
+  }
+
+  return summaryMsg.id;
+}
+
 /** 同步：归属 / 占位或 content 校验 / 加锁。失败不持锁。成功后必须调用 run（run 的 finally 释放锁）。 */
 export function beginTeamTurn(
   input: EngineerTurnInput,
@@ -427,9 +506,15 @@ export function beginTeamTurn(
           emit,
         });
 
+        const summaryMessageId = await maybeRunMikeSummary({
+          projectId: input.projectId,
+          deps,
+          emit,
+        });
+
         emit({
           type: "done",
-          messageId: alexOutcome.messageId,
+          messageId: summaryMessageId ?? alexOutcome.messageId,
           filesChanged: alexOutcome.filesChanged,
           previewEnqueued: alexOutcome.previewEnqueued,
           taskId: createdTaskId,
@@ -493,6 +578,10 @@ export async function retryStuckAssignedTask(
       task: latest,
       deps,
       extraUserContent: `请执行任务：${latest.title}`,
+    });
+    await maybeRunMikeSummary({
+      projectId: task.projectId,
+      deps,
     });
     return { ok: true };
   } catch (err) {

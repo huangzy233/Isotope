@@ -27,3 +27,7 @@ export function alexSystemPromptPath(): string {
 export function mikeSystemPromptPath(): string {
   return path.join(monorepoRoot(), "prompts/leader/mike-system.v1.md");
 }
+
+export function mikeSummaryPromptPath(): string {
+  return path.join(monorepoRoot(), "prompts/leader/mike-summary.v1.md");
+}
