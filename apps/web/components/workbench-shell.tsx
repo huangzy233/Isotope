@@ -80,6 +80,8 @@ type StreamHandlers = {
     previewEnqueued: boolean;
   }) => void;
   onError: (message: string) => void;
+  /** Stream ended without a terminal event (or fetch threw). Prefer over onError for transport. */
+  onTransportDisconnect?: () => void;
 };
 
 /** Strict Mode remount: first continue owns the SSE; later mounts rebind handlers. */
@@ -148,6 +150,14 @@ function applyToolStep(message: Message, ev: ToolStreamEvent): Message {
   return { ...message, process: { steps } };
 }
 
+function signalTransportDisconnect(handlers: StreamHandlers): void {
+  if (handlers.onTransportDisconnect) {
+    handlers.onTransportDisconnect();
+  } else {
+    handlers.onError("连接中断，请重试");
+  }
+}
+
 async function consumeEngineerStream(
   projectId: string,
   body: { action: "continue" } | { action: "send"; content: string },
@@ -202,7 +212,7 @@ async function consumeEngineerStream(
         try {
           data = JSON.parse(dataLine) as Record<string, unknown>;
         } catch {
-          handlers.onError("连接中断，请重试");
+          signalTransportDisconnect(handlers);
           return;
         }
         if (
@@ -268,10 +278,10 @@ async function consumeEngineerStream(
       }
     }
     if (!terminal) {
-      handlers.onError("连接中断，请重试");
+      signalTransportDisconnect(handlers);
     }
   } catch {
-    handlers.onError("连接中断，请重试");
+    signalTransportDisconnect(handlers);
   } finally {
     if (openedContinueSse) continueSseOpen.delete(projectId);
   }
@@ -298,6 +308,7 @@ export function WorkbenchShell({
   const splitRef = useRef<HTMLDivElement>(null);
   const continuedRef = useRef(false);
   const continueInFlightRef = useRef(false);
+  const reconnectAttemptRef = useRef(0);
   const currentAssistantIdRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -570,15 +581,23 @@ export function WorkbenchShell({
     ) {
       return;
     }
+    const lastId = last.id;
+    const hasProcessSteps = Boolean(last.process?.steps?.length);
     continuedRef.current = true;
     continueInFlightRef.current = true;
-    currentAssistantIdRef.current = last.id;
+    reconnectAttemptRef.current = 0;
+    currentAssistantIdRef.current = lastId;
     setSubmitting(true);
-    setAgentStatus("thinking");
+    setAgentStatus(hasProcessSteps ? "running" : "thinking");
     setMessages((prev) => {
       const copy = [...prev];
       const i = copy.length - 1;
-      copy[i] = { ...copy[i]!, content: "" };
+      const cur = copy[i]!;
+      copy[i] = {
+        ...cur,
+        content: "",
+        process: cur.process,
+      };
       return copy;
     });
 
@@ -627,6 +646,8 @@ export function WorkbenchShell({
           );
           currentAssistantIdRef.current = data.messageId;
         }
+        reconnectAttemptRef.current = 0;
+        setError(null);
         setAgentStatus("idle");
         setSubmitting(false);
         continueInFlightRef.current = false;
@@ -634,25 +655,80 @@ export function WorkbenchShell({
       },
       onError: (message) => {
         setError(message);
-        const id = currentAssistantIdRef.current;
-        if (id) {
-          setMessages((prev) =>
-            updateMessageById(prev, id, (m) => {
-              const cur = m.content;
-              const emptyOrPlaceholder =
-                !cur || cur === ASSISTANT_PLACEHOLDER;
-              return {
-                ...m,
-                content: emptyOrPlaceholder ? message : cur,
-              };
-            }),
-          );
+        const transport = message.includes("连接中断");
+        if (!transport) {
+          const id = currentAssistantIdRef.current;
+          if (id) {
+            setMessages((prev) =>
+              updateMessageById(prev, id, (m) => {
+                const cur = m.content;
+                const emptyOrPlaceholder =
+                  !cur || cur === ASSISTANT_PLACEHOLDER;
+                return {
+                  ...m,
+                  content: emptyOrPlaceholder ? message : cur,
+                };
+              }),
+            );
+          }
+          setAgentStatus("idle");
+          setSubmitting(false);
+          continueInFlightRef.current = false;
         }
-        setAgentStatus("idle");
-        setSubmitting(false);
-        continueInFlightRef.current = false;
+      },
+      onTransportDisconnect: () => {
+        setError("连接中断，正在恢复…");
+        setAgentStatus("running");
+        setSubmitting(true);
+        if (reconnectAttemptRef.current < 1) {
+          reconnectAttemptRef.current += 1;
+          queueMicrotask(() => {
+            attachContinueStream();
+          });
+        } else {
+          setError("连接中断，请重试");
+          setAgentStatus("idle");
+          setSubmitting(false);
+          continueInFlightRef.current = false;
+        }
       },
     };
+
+    function attachContinueStream() {
+      continueFlightByProject.set(project.id, {
+        handlers,
+        currentMessageId: currentAssistantIdRef.current ?? lastId,
+      });
+      void consumeEngineerStream(project.id, { action: "continue" }, {
+        onStatus: (phase) =>
+          continueFlightByProject.get(project.id)?.handlers.onStatus?.(phase),
+        onSpeaker: (data) =>
+          continueFlightByProject.get(project.id)?.handlers.onSpeaker?.(data),
+        onTask: (data) =>
+          continueFlightByProject.get(project.id)?.handlers.onTask?.(data),
+        onThinking: (text) =>
+          continueFlightByProject.get(project.id)?.handlers.onThinking?.(text),
+        onTool: (ev) =>
+          continueFlightByProject.get(project.id)?.handlers.onTool?.(ev),
+        onToken: (text) =>
+          continueFlightByProject.get(project.id)?.handlers.onToken(text),
+        onDone: (data) => {
+          continueFlightByProject.get(project.id)?.handlers.onDone(data);
+          continueFlightByProject.delete(project.id);
+        },
+        onError: (message) => {
+          continueFlightByProject.get(project.id)?.handlers.onError(message);
+          continueFlightByProject.delete(project.id);
+        },
+        onTransportDisconnect: () => {
+          continueFlightByProject
+            .get(project.id)
+            ?.handlers.onTransportDisconnect?.();
+        },
+      }).finally(() => {
+        continueFlightByProject.delete(project.id);
+      });
+    }
 
     const existing = continueFlightByProject.get(project.id);
     if (existing) {
@@ -662,34 +738,7 @@ export function WorkbenchShell({
       return;
     }
 
-    continueFlightByProject.set(project.id, {
-      handlers,
-      currentMessageId: last.id,
-    });
-    void consumeEngineerStream(project.id, { action: "continue" }, {
-      onStatus: (phase) =>
-        continueFlightByProject.get(project.id)?.handlers.onStatus?.(phase),
-      onSpeaker: (data) =>
-        continueFlightByProject.get(project.id)?.handlers.onSpeaker?.(data),
-      onTask: (data) =>
-        continueFlightByProject.get(project.id)?.handlers.onTask?.(data),
-      onThinking: (text) =>
-        continueFlightByProject.get(project.id)?.handlers.onThinking?.(text),
-      onTool: (ev) =>
-        continueFlightByProject.get(project.id)?.handlers.onTool?.(ev),
-      onToken: (text) =>
-        continueFlightByProject.get(project.id)?.handlers.onToken(text),
-      onDone: (data) => {
-        continueFlightByProject.get(project.id)?.handlers.onDone(data);
-        continueFlightByProject.delete(project.id);
-      },
-      onError: (message) => {
-        continueFlightByProject.get(project.id)?.handlers.onError(message);
-        continueFlightByProject.delete(project.id);
-      },
-    }).finally(() => {
-      continueFlightByProject.delete(project.id);
-    });
+    attachContinueStream();
   }, [project.id, initialMessages, fetchPreview, applySpeaker, applyTaskEvent]);
 
   async function handleRebuild() {
@@ -805,15 +854,23 @@ export function WorkbenchShell({
         },
         onError: (message) => {
           setError(message);
-          const id = currentAssistantIdRef.current;
-          if (id) {
-            setMessages((prev) =>
-              updateMessageById(prev, id, (m) => ({
-                ...m,
-                content: m.content || message,
-              })),
-            );
+          const transport = message.includes("连接中断");
+          if (!transport) {
+            const id = currentAssistantIdRef.current;
+            if (id) {
+              setMessages((prev) =>
+                updateMessageById(prev, id, (m) => ({
+                  ...m,
+                  content: m.content || message,
+                })),
+              );
+            }
           }
+          setAgentStatus("idle");
+          setSubmitting(false);
+        },
+        onTransportDisconnect: () => {
+          setError("连接中断，请重试");
           setAgentStatus("idle");
           setSubmitting(false);
         },
