@@ -8,7 +8,17 @@
   "exports": {
     ".": "./src/index.ts"
   },
+  "dependencies": {
+    "@isotope/agents": "workspace:*",
+    "@isotope/llm": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.2",
+    "vitest": "^3.0.0"
+  },
   "scripts": {
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
   }
 }

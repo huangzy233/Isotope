@@ -40,6 +40,10 @@ export type WorkspaceStore = {
     content: string;
     agentName?: string;
   }): Message;
+  updateMessage(
+    messageId: string,
+    patch: { content: string },
+  ): Message | null;
   listMessages(projectId: string): Message[];
   deleteProject(id: string): void;
   readFile(projectId: string, relativePath: string): string;
@@ -214,6 +218,26 @@ export function createFsSqliteWorkspace(opts: {
       });
       insertAndTouchProject();
       return message;
+    },
+
+    updateMessage(messageId, patch) {
+      const row = database
+        .prepare(
+          `SELECT id, project_id, role, content, created_at, agent_name
+           FROM messages WHERE id = ?`,
+        )
+        .get(messageId) as MessageRow | undefined;
+      if (!row) return null;
+      const now = new Date().toISOString();
+      database.transaction(() => {
+        database
+          .prepare(`UPDATE messages SET content = ? WHERE id = ?`)
+          .run(patch.content, messageId);
+        database
+          .prepare(`UPDATE projects SET updated_at = ? WHERE id = ?`)
+          .run(now, row.project_id);
+      })();
+      return toMessage({ ...row, content: patch.content });
     },
 
     listMessages(projectId) {

@@ -9,8 +9,10 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@isotope/agents": "workspace:*",
     "@isotope/application": "workspace:*",
     "@isotope/identity": "workspace:*",
+    "@isotope/llm": "workspace:*",
     "@isotope/preview": "workspace:*",
     "@isotope/sandbox": "workspace:*",
     "@isotope/workspace": "workspace:*",

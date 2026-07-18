@@ -10,12 +10,18 @@ importers:
 
   apps/web:
     dependencies:
+      '@isotope/agents':
+        specifier: workspace:*
+        version: link:../../packages/agents
       '@isotope/application':
         specifier: workspace:*
         version: link:../../packages/application
       '@isotope/identity':
         specifier: workspace:*
         version: link:../../packages/identity
+      '@isotope/llm':
+        specifier: workspace:*
+        version: link:../../packages/llm
       '@isotope/preview':
         specifier: workspace:*
         version: link:../../packages/preview
@@ -93,15 +99,49 @@ importers:
         specifier: ^5.7.2
         version: 5.9.3
 
-  packages/agent-runtime: {}
+  packages/agent-runtime:
+    dependencies:
+      '@isotope/agents':
+        specifier: workspace:*
+        version: link:../agents
+      '@isotope/llm':
+        specifier: workspace:*
+        version: link:../llm
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.0
+        version: 22.20.1
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.7(@types/node@22.20.1)(jiti@1.21.7)(yaml@2.9.0)
 
-  packages/agents: {}
+  packages/agents:
+    dependencies:
+      '@isotope/llm':
+        specifier: workspace:*
+        version: link:../llm
+    devDependencies:
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
 
   packages/application:
     dependencies:
+      '@isotope/agent-runtime':
+        specifier: workspace:*
+        version: link:../agent-runtime
+      '@isotope/agents':
+        specifier: workspace:*
+        version: link:../agents
       '@isotope/identity':
         specifier: workspace:*
         version: link:../identity
+      '@isotope/llm':
+        specifier: workspace:*
+        version: link:../llm
       '@isotope/preview':
         specifier: workspace:*
         version: link:../preview
@@ -139,7 +179,17 @@ importers:
 
   packages/kernel: {}
 
-  packages/llm: {}
+  packages/llm:
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.0
+        version: 22.20.1
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.7(@types/node@22.20.1)(jiti@1.21.7)(yaml@2.9.0)
 
   packages/memory: {}
 

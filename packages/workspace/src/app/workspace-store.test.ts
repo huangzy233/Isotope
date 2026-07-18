@@ -122,4 +122,23 @@ describe("createFsSqliteWorkspace", () => {
     );
     expect(store.getProjectPaths("proj_missing")).toBeNull();
   });
+
+  it("updateMessage updates content or returns null", () => {
+    const p = store.createProject({
+      ownerUserId: "demo",
+      name: "x",
+      mode: "engineer",
+    });
+    const msg = store.appendMessage({
+      projectId: p.id,
+      role: "assistant",
+      content: "旧文案",
+      agentName: "Alex",
+    });
+    const updated = store.updateMessage(msg.id, { content: "新文案" });
+    expect(updated?.content).toBe("新文案");
+    expect(updated?.id).toBe(msg.id);
+    expect(store.listMessages(p.id)[0]?.content).toBe("新文案");
+    expect(store.updateMessage("msg_missing", { content: "x" })).toBeNull();
+  });
 });

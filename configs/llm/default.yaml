@@ -1,0 +1,4 @@
+baseUrl: https://api.deepseek.com
+model: deepseek-v4-pro
+timeoutMs: 120000
+maxToolRounds: 8

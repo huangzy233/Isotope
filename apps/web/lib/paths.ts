@@ -15,3 +15,11 @@ export function dataRoot(): string {
 export function templatePath(): string {
   return path.join(monorepoRoot(), "templates/vite-react");
 }
+
+export function llmConfigPath(): string {
+  return path.join(monorepoRoot(), "configs/llm/default.yaml");
+}
+
+export function alexSystemPromptPath(): string {
+  return path.join(monorepoRoot(), "prompts/coding/alex-system.v1.md");
+}

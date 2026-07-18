@@ -1,0 +1,361 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createCoderAgent } from "@isotope/agents";
+import type { LlmClient, LlmStreamEvent } from "@isotope/llm";
+import type { PreviewService, PreviewStatusSnapshot } from "@isotope/preview";
+import { createFsSqliteWorkspace } from "@isotope/workspace";
+import { createProject } from "./create-project.js";
+import { ASSISTANT_PLACEHOLDER } from "./placeholder.js";
+import {
+  beginEngineerTurn,
+  type EngineerTurnEvent,
+} from "./stream-engineer-turn.js";
+
+const templatePath = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../../../../templates/vite-react",
+);
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function readySnapshot(): PreviewStatusSnapshot {
+  return {
+    status: "ready",
+    revision: "rev-1",
+    error: null,
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  };
+}
+
+function mockPreview(
+  overrides: Partial<PreviewService> = {},
+): PreviewService {
+  return {
+    getStatus: vi.fn(() => readySnapshot()),
+    ensureBuild: vi.fn(() => readySnapshot()),
+    enqueueBuild: vi.fn(() => readySnapshot()),
+    readAsset: vi.fn(() => null),
+    ...overrides,
+  };
+}
+
+function llmFromScript(rounds: LlmStreamEvent[][]): LlmClient {
+  let i = 0;
+  return {
+    async *complete() {
+      const events = rounds[i++] ?? [
+        { type: "finished", finishReason: "stop" } as const,
+      ];
+      for (const ev of events) yield ev;
+    },
+  };
+}
+
+function llmWithDelay(
+  rounds: LlmStreamEvent[][],
+  delayMs: number,
+): LlmClient {
+  let i = 0;
+  return {
+    async *complete() {
+      await delay(delayMs);
+      const events = rounds[i++] ?? [
+        { type: "finished", finishReason: "stop" } as const,
+      ];
+      for (const ev of events) yield ev;
+    },
+  };
+}
+
+describe("beginEngineerTurn", () => {
+  let dataRoot: string;
+  let workspace: ReturnType<typeof createFsSqliteWorkspace>;
+
+  beforeEach(() => {
+    dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), "iso-app-turn-"));
+    workspace = createFsSqliteWorkspace({ dataRoot, templatePath });
+  });
+
+  afterEach(() => {
+    fs.rmSync(dataRoot, { recursive: true, force: true });
+  });
+
+  it("continue replaces placeholder, streams tokens, enqueues preview after write_file", async () => {
+    const { project } = createProject(
+      {
+        ownerUserId: "demo",
+        requirement: "做一个空页面",
+        mode: "engineer",
+      },
+      workspace,
+    );
+    const preview = mockPreview();
+    const events: EngineerTurnEvent[] = [];
+
+    const begun = beginEngineerTurn(
+      {
+        ownerUserId: "demo",
+        projectId: project.id,
+        action: "continue",
+      },
+      {
+        workspace,
+        preview,
+        llm: llmFromScript([
+          [
+            {
+              type: "tool_calls",
+              toolCalls: [
+                {
+                  id: "c1",
+                  type: "function",
+                  function: {
+                    name: "write_file",
+                    arguments: JSON.stringify({
+                      path: "src/App.tsx",
+                      content:
+                        "export default function App(){return null}",
+                    }),
+                  },
+                },
+              ],
+            },
+            { type: "finished", finishReason: "tool_calls" },
+          ],
+          [
+            { type: "content_delta", text: "已更新 App" },
+            { type: "finished", finishReason: "stop" },
+          ],
+        ]),
+        agent: createCoderAgent({ systemPrompt: "test" }),
+        maxToolRounds: 8,
+      },
+    );
+
+    expect(begun.ok).toBe(true);
+    if (!begun.ok) return;
+
+    await begun.run((ev) => events.push(ev));
+
+    const messages = workspace.listMessages(project.id);
+    const last = messages.at(-1);
+    expect(last?.role).toBe("assistant");
+    expect(last?.content).toBe("已更新 App");
+    expect(last?.content).not.toBe(ASSISTANT_PLACEHOLDER);
+    expect(workspace.readFile(project.id, "src/App.tsx")).toContain("App");
+    expect(preview.enqueueBuild).toHaveBeenCalledWith(project.id);
+    expect(events.some((e) => e.type === "token" && e.text === "已更新 App")).toBe(
+      true,
+    );
+    expect(
+      events.some(
+        (e) =>
+          e.type === "done" &&
+          e.filesChanged === true &&
+          e.previewEnqueued === true &&
+          e.messageId === last?.id,
+      ),
+    ).toBe(true);
+  });
+
+  it("send appends user + assistant and leaves no placeholder", async () => {
+    const { project, messages: seeded } = createProject(
+      {
+        ownerUserId: "demo",
+        requirement: "初始需求",
+        mode: "engineer",
+      },
+      workspace,
+    );
+    const seedAssistant = seeded.find((m) => m.role === "assistant");
+    expect(seedAssistant?.content).toBe(ASSISTANT_PLACEHOLDER);
+    workspace.updateMessage(seedAssistant!.id, { content: "先前回复" });
+
+    const before = workspace.listMessages(project.id);
+    const preview = mockPreview();
+    const begun = beginEngineerTurn(
+      {
+        ownerUserId: "demo",
+        projectId: project.id,
+        action: "send",
+        content: "再改一下标题",
+      },
+      {
+        workspace,
+        preview,
+        llm: llmFromScript([
+          [
+            { type: "content_delta", text: "好的，已调整" },
+            { type: "finished", finishReason: "stop" },
+          ],
+        ]),
+        agent: createCoderAgent({ systemPrompt: "test" }),
+        maxToolRounds: 8,
+      },
+    );
+
+    expect(begun.ok).toBe(true);
+    if (!begun.ok) return;
+    await begun.run(() => {});
+
+    const after = workspace.listMessages(project.id);
+    expect(after.length - before.length).toBe(2);
+    expect(after.at(-2)?.role).toBe("user");
+    expect(after.at(-2)?.content).toBe("再改一下标题");
+    expect(after.at(-1)?.role).toBe("assistant");
+    expect(after.at(-1)?.content).toBe("好的，已调整");
+    expect(after.every((m) => m.content !== ASSISTANT_PLACEHOLDER)).toBe(true);
+  });
+
+  it("send cancels leftover seed placeholder before appending user", async () => {
+    const { project, messages: seeded } = createProject(
+      {
+        ownerUserId: "demo",
+        requirement: "初始需求",
+        mode: "engineer",
+      },
+      workspace,
+    );
+    expect(
+      seeded.some(
+        (m) => m.role === "assistant" && m.content === ASSISTANT_PLACEHOLDER,
+      ),
+    ).toBe(true);
+
+    const begun = beginEngineerTurn(
+      {
+        ownerUserId: "demo",
+        projectId: project.id,
+        action: "send",
+        content: "直接开聊",
+      },
+      {
+        workspace,
+        preview: mockPreview(),
+        llm: llmFromScript([
+          [
+            { type: "content_delta", text: "收到" },
+            { type: "finished", finishReason: "stop" },
+          ],
+        ]),
+        agent: createCoderAgent({ systemPrompt: "test" }),
+        maxToolRounds: 8,
+      },
+    );
+
+    expect(begun.ok).toBe(true);
+    if (!begun.ok) return;
+    await begun.run(() => {});
+
+    const after = workspace.listMessages(project.id);
+    expect(after.every((m) => m.content !== ASSISTANT_PLACEHOLDER)).toBe(true);
+    expect(
+      after.some((m) => m.content === "（上一轮待生成已取消）"),
+    ).toBe(true);
+    expect(after.at(-2)?.role).toBe("user");
+    expect(after.at(-2)?.content).toBe("直接开聊");
+    expect(after.at(-1)?.content).toBe("收到");
+  });
+
+  it("second begin while first run holds lock returns conflict", async () => {
+    const { project } = createProject(
+      {
+        ownerUserId: "demo",
+        requirement: "做一个空页面",
+        mode: "engineer",
+      },
+      workspace,
+    );
+    const preview = mockPreview();
+    const deps = {
+      workspace,
+      preview,
+      llm: llmWithDelay(
+        [
+          [
+            { type: "content_delta", text: "ok" },
+            { type: "finished", finishReason: "stop" },
+          ],
+        ],
+        50,
+      ),
+      agent: createCoderAgent({ systemPrompt: "test" }),
+      maxToolRounds: 8,
+    };
+
+    const a = beginEngineerTurn(
+      {
+        ownerUserId: "demo",
+        projectId: project.id,
+        action: "continue",
+      },
+      deps,
+    );
+    const b = beginEngineerTurn(
+      {
+        ownerUserId: "demo",
+        projectId: project.id,
+        action: "continue",
+      },
+      deps,
+    );
+
+    expect(a.ok).toBe(true);
+    expect(b.ok).toBe(false);
+    if (b.ok) return;
+    expect(b.status).toBe("conflict");
+
+    if (!a.ok) return;
+    await a.run(() => {});
+  });
+
+  it("llm complete throw emits error and prefixes placeholder with 生成失败：", async () => {
+    const { project } = createProject(
+      {
+        ownerUserId: "demo",
+        requirement: "做一个空页面",
+        mode: "engineer",
+      },
+      workspace,
+    );
+    const preview = mockPreview();
+    const events: EngineerTurnEvent[] = [];
+
+    const begun = beginEngineerTurn(
+      {
+        ownerUserId: "demo",
+        projectId: project.id,
+        action: "continue",
+      },
+      {
+        workspace,
+        preview,
+        llm: {
+          async *complete() {
+            throw new Error("upstream down");
+          },
+        },
+        agent: createCoderAgent({ systemPrompt: "test" }),
+        maxToolRounds: 8,
+      },
+    );
+
+    expect(begun.ok).toBe(true);
+    if (!begun.ok) return;
+    await begun.run((ev) => events.push(ev));
+
+    const last = workspace.listMessages(project.id).at(-1);
+    expect(last?.content.startsWith("生成失败：")).toBe(true);
+    expect(last?.content).toContain("upstream down");
+    expect(
+      events.some(
+        (e) => e.type === "error" && e.message.startsWith("生成失败："),
+      ),
+    ).toBe(true);
+  });
+});

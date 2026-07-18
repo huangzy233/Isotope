@@ -10,3 +10,10 @@ export { deleteProject } from "./projects/delete-project.js";
 export { getPreviewStatus } from "./projects/get-preview-status.js";
 export { enqueuePreviewBuild } from "./projects/enqueue-preview-build.js";
 export { readPreviewAsset } from "./projects/read-preview-asset.js";
+export {
+  beginEngineerTurn,
+  type BeginEngineerTurnResult,
+  type EngineerTurnDeps,
+  type EngineerTurnEvent,
+  type EngineerTurnInput,
+} from "./projects/stream-engineer-turn.js";

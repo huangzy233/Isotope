@@ -1,1 +1,9 @@
-// @isotope/llm — public module surface (skeleton)
+export type {
+  LlmClient,
+  LlmMessage,
+  LlmStreamEvent,
+  LlmToolCall,
+  LlmToolDefinition,
+  OpenAiCompatibleConfig,
+} from "./domain/types.js";
+export { createOpenAiCompatibleClient } from "./providers/openai-compatible.js";
