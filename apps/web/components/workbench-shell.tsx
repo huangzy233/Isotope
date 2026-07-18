@@ -84,11 +84,13 @@ type StreamHandlers = {
   onTransportDisconnect?: () => void;
 };
 
+type ContinueFlight = {
+  handlers: StreamHandlers;
+  currentMessageId: string;
+};
+
 /** Strict Mode remount: first continue owns the SSE; later mounts rebind handlers. */
-const continueFlightByProject = new Map<
-  string,
-  { handlers: StreamHandlers; currentMessageId: string }
->();
+const continueFlightByProject = new Map<string, ContinueFlight>();
 /** Projects with an open continue SSE body (409 from a duplicate continue is ignored). */
 const continueSseOpen = new Set<string>();
 
@@ -370,6 +372,18 @@ export function WorkbenchShell({
     (data: { agentName: string; messageId: string }) => {
       const prevId = currentAssistantIdRef.current;
       setMessages((prev) => {
+        // Hub replay / reconnect: reuse the existing row for this messageId
+        // instead of appending a duplicate when the agent name changes.
+        const byMessageId = prev.find((m) => m.id === data.messageId);
+        if (byMessageId) {
+          if ((byMessageId.agentName ?? "Alex") === data.agentName) {
+            return prev;
+          }
+          return updateMessageById(prev, data.messageId, (m) => ({
+            ...m,
+            agentName: data.agentName,
+          }));
+        }
         const current = prevId
           ? prev.find((m) => m.id === prevId)
           : undefined;
@@ -707,10 +721,16 @@ export function WorkbenchShell({
     };
 
     function attachContinueStream() {
-      continueFlightByProject.set(project.id, {
+      const myFlight: ContinueFlight = {
         handlers,
         currentMessageId: currentAssistantIdRef.current ?? lastId,
-      });
+      };
+      continueFlightByProject.set(project.id, myFlight);
+      const releaseIfOwned = () => {
+        if (continueFlightByProject.get(project.id) === myFlight) {
+          continueFlightByProject.delete(project.id);
+        }
+      };
       void consumeEngineerStream(project.id, { action: "continue" }, {
         onStatus: (phase) =>
           continueFlightByProject.get(project.id)?.handlers.onStatus?.(phase),
@@ -726,11 +746,11 @@ export function WorkbenchShell({
           continueFlightByProject.get(project.id)?.handlers.onToken(text),
         onDone: (data) => {
           continueFlightByProject.get(project.id)?.handlers.onDone(data);
-          continueFlightByProject.delete(project.id);
+          releaseIfOwned();
         },
         onError: (message) => {
           continueFlightByProject.get(project.id)?.handlers.onError(message);
-          continueFlightByProject.delete(project.id);
+          releaseIfOwned();
         },
         onTransportDisconnect: () => {
           continueFlightByProject
@@ -738,7 +758,8 @@ export function WorkbenchShell({
             ?.handlers.onTransportDisconnect?.();
         },
       }).finally(() => {
-        continueFlightByProject.delete(project.id);
+        // Do not delete a newer reconnect flight that replaced this one.
+        releaseIfOwned();
       });
     }
 
