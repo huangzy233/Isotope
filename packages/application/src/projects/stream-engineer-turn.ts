@@ -2,13 +2,23 @@ import { runTurn } from "@isotope/agent-runtime";
 import type { CoderAgent } from "@isotope/agents";
 import type { LlmClient } from "@isotope/llm";
 import type { PreviewService } from "@isotope/preview";
-import type { WorkspaceStore } from "@isotope/workspace";
+import type { MessageProcess, WorkspaceStore } from "@isotope/workspace";
 import { enqueuePreviewBuild } from "./enqueue-preview-build.js";
 import { getProject } from "./get-project.js";
 import { ASSISTANT_PLACEHOLDER } from "./placeholder.js";
 import { releaseTurnLock, tryAcquireTurnLock } from "./turn-lock.js";
 
 export type EngineerTurnEvent =
+  | { type: "status"; phase: "thinking" | "running" | "streaming" }
+  | { type: "thinking"; text: string }
+  | {
+      type: "tool";
+      id: string;
+      name: string;
+      state: "start" | "end";
+      summary?: string;
+      ok?: boolean;
+    }
   | { type: "token"; text: string }
   | {
       type: "done";
@@ -121,6 +131,8 @@ export function beginEngineerTurn(
             deps.workspace.writeFile(input.projectId, p, c),
         };
 
+        const process: MessageProcess = { steps: [] };
+
         try {
           const result = await runTurn({
             llm: deps.llm,
@@ -129,6 +141,58 @@ export function beginEngineerTurn(
             history,
             maxToolRounds: deps.maxToolRounds,
             onToken: (text) => emit({ type: "token", text }),
+            onThinking: (text) => {
+              const last = process.steps.at(-1);
+              if (last?.type === "thinking") {
+                last.text += text;
+              } else {
+                process.steps.push({ type: "thinking", text });
+              }
+              emit({ type: "thinking", text });
+            },
+            onTool: (ev) => {
+              if (ev.state === "start") {
+                process.steps.push({
+                  type: "tool",
+                  id: ev.id,
+                  name: ev.name,
+                  status: "running",
+                  summary: ev.summary,
+                });
+              } else {
+                const idx = process.steps.findIndex(
+                  (s) => s.type === "tool" && s.id === ev.id,
+                );
+                const status = ev.ok === false ? "error" : "done";
+                if (idx >= 0 && process.steps[idx]?.type === "tool") {
+                  const prev = process.steps[idx];
+                  process.steps[idx] = {
+                    type: "tool",
+                    id: prev.id,
+                    name: prev.name,
+                    status,
+                    summary: ev.summary ?? prev.summary,
+                  };
+                } else {
+                  process.steps.push({
+                    type: "tool",
+                    id: ev.id,
+                    name: ev.name,
+                    status,
+                    summary: ev.summary,
+                  });
+                }
+              }
+              emit({
+                type: "tool",
+                id: ev.id,
+                name: ev.name,
+                state: ev.state,
+                summary: ev.summary,
+                ok: ev.ok,
+              });
+            },
+            onStatus: (phase) => emit({ type: "status", phase }),
           });
 
           const text = result.assistantText || "（无回复内容）";
@@ -136,6 +200,7 @@ export function beginEngineerTurn(
           if (replaceId) {
             messageId = deps.workspace.updateMessage(replaceId, {
               content: text,
+              process: result.process,
             })!.id;
           } else {
             messageId = deps.workspace.appendMessage({
@@ -143,6 +208,7 @@ export function beginEngineerTurn(
               role: "assistant",
               content: text,
               agentName: "Alex",
+              process: result.process,
             }).id;
           }
 
@@ -168,14 +234,18 @@ export function beginEngineerTurn(
           const msg =
             "生成失败：" +
             (err instanceof Error ? err.message : "未知错误").slice(0, 300);
+          const failurePatch =
+            process.steps.length > 0
+              ? { content: msg, process }
+              : { content: msg };
           if (replaceId) {
-            deps.workspace.updateMessage(replaceId, { content: msg });
+            deps.workspace.updateMessage(replaceId, failurePatch);
           } else {
             deps.workspace.appendMessage({
               projectId: input.projectId,
               role: "assistant",
-              content: msg,
               agentName: "Alex",
+              ...failurePatch,
             });
           }
           emit({ type: "error", message: msg });

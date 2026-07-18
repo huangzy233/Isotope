@@ -141,4 +141,62 @@ describe("createFsSqliteWorkspace", () => {
     expect(store.listMessages(p.id)[0]?.content).toBe("新文案");
     expect(store.updateMessage("msg_missing", { content: "x" })).toBeNull();
   });
+
+  it("appendMessage and updateMessage persist process", () => {
+    const p = store.createProject({
+      ownerUserId: "demo",
+      name: "x",
+      mode: "engineer",
+    });
+    const msg = store.appendMessage({
+      projectId: p.id,
+      role: "assistant",
+      content: "结论",
+      agentName: "Alex",
+      process: {
+        steps: [
+          { type: "thinking", text: "先看文件" },
+          {
+            type: "tool",
+            id: "c1",
+            name: "read_file",
+            status: "done",
+            summary: "src/App.tsx",
+          },
+        ],
+      },
+    });
+    expect(store.listMessages(p.id)[0]?.process?.steps).toEqual(
+      msg.process?.steps,
+    );
+
+    const updated = store.updateMessage(msg.id, {
+      content: "新结论",
+      process: {
+        steps: [{ type: "thinking", text: "改完了" }],
+      },
+    });
+    expect(updated?.content).toBe("新结论");
+    expect(updated?.process?.steps).toEqual([
+      { type: "thinking", text: "改完了" },
+    ]);
+    expect(store.listMessages(p.id)[0]?.process?.steps[0]).toEqual({
+      type: "thinking",
+      text: "改完了",
+    });
+  });
+
+  it("messages without process_json list without process", () => {
+    const p = store.createProject({
+      ownerUserId: "demo",
+      name: "y",
+      mode: "engineer",
+    });
+    store.appendMessage({
+      projectId: p.id,
+      role: "user",
+      content: "hi",
+    });
+    expect(store.listMessages(p.id)[0]?.process).toBeUndefined();
+  });
 });

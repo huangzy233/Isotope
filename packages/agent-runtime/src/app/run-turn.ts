@@ -1,10 +1,40 @@
 import type { LlmMessage } from "@isotope/llm";
-import type { RunTurnInput, RunTurnResult } from "../domain/types.js";
+import type {
+  RunTurnInput,
+  RunTurnResult,
+  TurnProcess,
+  TurnProcessStep,
+} from "../domain/types.js";
+import { toolSummary } from "./tool-summary.js";
 
 const ROUND_LIMIT_NOTE = "（已达工具轮次上限）";
 
+function appendThinking(process: TurnProcess, text: string): void {
+  const last = process.steps[process.steps.length - 1];
+  if (last?.type === "thinking") {
+    last.text += text;
+    return;
+  }
+  process.steps.push({ type: "thinking", text });
+}
+
+function hasThinking(steps: TurnProcessStep[]): boolean {
+  return steps.some((s) => s.type === "thinking" && s.text.length > 0);
+}
+
 export async function runTurn(input: RunTurnInput): Promise<RunTurnResult> {
-  const { llm, agent, port, history, maxToolRounds, signal, onToken } = input;
+  const {
+    llm,
+    agent,
+    port,
+    history,
+    maxToolRounds,
+    signal,
+    onToken,
+    onThinking,
+    onTool,
+    onStatus,
+  } = input;
 
   const messages: LlmMessage[] = [
     { role: "system", content: agent.systemPrompt },
@@ -20,10 +50,13 @@ export async function runTurn(input: RunTurnInput): Promise<RunTurnResult> {
 
   let filesChanged = false;
   let assistantText = "";
+  const process: TurnProcess = { steps: [] };
+
+  onStatus?.("thinking");
 
   for (let round = 0; round < maxToolRounds; round++) {
     let hadToolCalls = false;
-    let roundContent = "";
+    const roundChunks: string[] = [];
 
     for await (const ev of llm.complete({
       messages,
@@ -31,25 +64,64 @@ export async function runTurn(input: RunTurnInput): Promise<RunTurnResult> {
       signal,
     })) {
       if (ev.type === "content_delta") {
-        roundContent += ev.text;
-        assistantText += ev.text;
-        onToken(ev.text);
+        roundChunks.push(ev.text);
         continue;
       }
 
       if (ev.type === "tool_calls") {
         hadToolCalls = true;
+        const thinkingText = roundChunks.join("");
+        roundChunks.length = 0;
+        if (thinkingText.length > 0) {
+          onThinking?.(thinkingText);
+          appendThinking(process, thinkingText);
+        }
+        onStatus?.("running");
+
         messages.push({
           role: "assistant",
-          content: roundContent.length > 0 ? roundContent : null,
+          content: thinkingText.length > 0 ? thinkingText : null,
           tool_calls: ev.toolCalls,
         });
+
         for (const call of ev.toolCalls) {
+          const summary = toolSummary(
+            call.function.name,
+            call.function.arguments,
+          );
+          onTool?.({
+            id: call.id,
+            name: call.function.name,
+            state: "start",
+            summary,
+          });
+          process.steps.push({
+            type: "tool",
+            id: call.id,
+            name: call.function.name,
+            status: "running",
+            summary,
+          });
+
           const outcome = agent.executeTool(
             call.function.name,
             call.function.arguments,
             port,
           );
+
+          const toolStep = process.steps[process.steps.length - 1];
+          if (toolStep?.type === "tool" && toolStep.id === call.id) {
+            toolStep.status = outcome.ok ? "done" : "error";
+          }
+
+          onTool?.({
+            id: call.id,
+            name: call.function.name,
+            state: "end",
+            summary,
+            ok: outcome.ok,
+          });
+
           if (call.function.name === "write_file" && outcome.ok) {
             filesChanged = true;
           }
@@ -66,14 +138,25 @@ export async function runTurn(input: RunTurnInput): Promise<RunTurnResult> {
     }
 
     if (!hadToolCalls) {
-      return { assistantText, filesChanged };
+      onStatus?.("streaming");
+      for (const chunk of roundChunks) {
+        onToken(chunk);
+        assistantText += chunk;
+      }
+      return { assistantText, filesChanged, process };
     }
   }
 
   if (assistantText.length > 0) {
     onToken(ROUND_LIMIT_NOTE);
     assistantText += ROUND_LIMIT_NOTE;
-    return { assistantText, filesChanged };
+    return { assistantText, filesChanged, process };
+  }
+
+  if (hasThinking(process.steps)) {
+    onToken(ROUND_LIMIT_NOTE);
+    assistantText = ROUND_LIMIT_NOTE;
+    return { assistantText, filesChanged, process };
   }
 
   throw new Error("工具调用轮次过多");

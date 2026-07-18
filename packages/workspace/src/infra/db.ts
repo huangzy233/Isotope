@@ -30,5 +30,11 @@ export function openWorkspaceDatabase(dataRoot: string): Database.Database {
     CREATE INDEX IF NOT EXISTS idx_messages_project_created
       ON messages(project_id, created_at ASC);
   `);
+  const cols = database
+    .prepare(`PRAGMA table_info(messages)`)
+    .all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === "process_json")) {
+    database.exec(`ALTER TABLE messages ADD COLUMN process_json TEXT`);
+  }
   return database;
 }

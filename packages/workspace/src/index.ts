@@ -1,5 +1,7 @@
 export type {
   Message,
+  MessageProcess,
+  MessageProcessStep,
   MessageRole,
   Project,
   ProjectMode,

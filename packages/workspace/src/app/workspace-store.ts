@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type {
   Message,
+  MessageProcess,
   MessageRole,
   Project,
   ProjectMode,
@@ -39,10 +40,11 @@ export type WorkspaceStore = {
     role: MessageRole;
     content: string;
     agentName?: string;
+    process?: MessageProcess;
   }): Message;
   updateMessage(
     messageId: string,
-    patch: { content: string },
+    patch: { content?: string; process?: MessageProcess | null },
   ): Message | null;
   listMessages(projectId: string): Message[];
   deleteProject(id: string): void;
@@ -67,7 +69,21 @@ type MessageRow = {
   content: string;
   created_at: string;
   agent_name: string | null;
+  process_json: string | null;
 };
+
+function parseProcessJson(
+  processJson: string | null,
+): MessageProcess | undefined {
+  if (processJson === null || processJson === "") {
+    return undefined;
+  }
+  try {
+    return JSON.parse(processJson) as MessageProcess;
+  } catch {
+    return undefined;
+  }
+}
 
 function randomId(prefix: "proj_" | "msg_"): string {
   return (
@@ -87,6 +103,7 @@ function toProject(row: ProjectRow): Project {
 }
 
 function toMessage(row: MessageRow): Message {
+  const process = parseProcessJson(row.process_json);
   return {
     id: row.id,
     projectId: row.project_id,
@@ -94,6 +111,7 @@ function toMessage(row: MessageRow): Message {
     content: row.content,
     createdAt: row.created_at,
     ...(row.agent_name === null ? {} : { agentName: row.agent_name }),
+    ...(process === undefined ? {} : { process }),
   };
 }
 
@@ -196,13 +214,14 @@ export function createFsSqliteWorkspace(opts: {
         content: input.content,
         createdAt: now,
         ...(input.agentName === undefined ? {} : { agentName: input.agentName }),
+        ...(input.process === undefined ? {} : { process: input.process }),
       };
       const insertAndTouchProject = database.transaction(() => {
         database
           .prepare(
             `INSERT INTO messages
-              (id, project_id, role, content, created_at, agent_name)
-             VALUES (?, ?, ?, ?, ?, ?)`,
+              (id, project_id, role, content, created_at, agent_name, process_json)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`,
           )
           .run(
             message.id,
@@ -211,6 +230,7 @@ export function createFsSqliteWorkspace(opts: {
             message.content,
             message.createdAt,
             message.agentName ?? null,
+            input.process ? JSON.stringify(input.process) : null,
           );
         database
           .prepare("UPDATE projects SET updated_at = ? WHERE id = ?")
@@ -223,27 +243,39 @@ export function createFsSqliteWorkspace(opts: {
     updateMessage(messageId, patch) {
       const row = database
         .prepare(
-          `SELECT id, project_id, role, content, created_at, agent_name
+          `SELECT id, project_id, role, content, created_at, agent_name, process_json
            FROM messages WHERE id = ?`,
         )
         .get(messageId) as MessageRow | undefined;
       if (!row) return null;
       const now = new Date().toISOString();
+      const content = patch.content ?? row.content;
+      let processJson = row.process_json;
+      if (patch.process !== undefined) {
+        processJson =
+          patch.process === null ? null : JSON.stringify(patch.process);
+      }
       database.transaction(() => {
         database
-          .prepare(`UPDATE messages SET content = ? WHERE id = ?`)
-          .run(patch.content, messageId);
+          .prepare(
+            `UPDATE messages SET content = ?, process_json = ? WHERE id = ?`,
+          )
+          .run(content, processJson, messageId);
         database
           .prepare(`UPDATE projects SET updated_at = ? WHERE id = ?`)
           .run(now, row.project_id);
       })();
-      return toMessage({ ...row, content: patch.content });
+      return toMessage({
+        ...row,
+        content,
+        process_json: processJson,
+      });
     },
 
     listMessages(projectId) {
       const rows = database
         .prepare(
-          `SELECT id, project_id, role, content, created_at, agent_name
+          `SELECT id, project_id, role, content, created_at, agent_name, process_json
            FROM messages
            WHERE project_id = ?
            ORDER BY created_at ASC`,

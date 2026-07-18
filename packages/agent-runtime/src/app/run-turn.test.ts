@@ -70,4 +70,197 @@ describe("runTurn", () => {
     expect(result.assistantText).toBe("已更新 App");
     expect(tokens.join("")).toBe("已更新 App");
   });
+
+  it("routes pre-tool content to thinking and emits tool events", async () => {
+    const files = new Map<string, string>([["src/App.tsx", "old"]]);
+    const port = {
+      listFiles: () => [...files.keys()],
+      readFile: (p: string) => files.get(p) ?? "",
+      writeFile: (p: string, c: string) => {
+        files.set(p, c);
+      },
+    };
+    const agent = createCoderAgent({ systemPrompt: "test" });
+    const tokens: string[] = [];
+    const thinking: string[] = [];
+    const tools: Array<{ name: string; state: string; summary?: string }> = [];
+    const phases: string[] = [];
+
+    const result = await runTurn({
+      llm: llmFromScript([
+        [
+          { type: "content_delta", text: "我先读一下" },
+          {
+            type: "tool_calls",
+            toolCalls: [
+              {
+                id: "c1",
+                type: "function",
+                function: {
+                  name: "read_file",
+                  arguments: JSON.stringify({ path: "src/App.tsx" }),
+                },
+              },
+            ],
+          },
+          { type: "finished", finishReason: "tool_calls" },
+        ],
+        [
+          { type: "content_delta", text: "读完了" },
+          { type: "finished", finishReason: "stop" },
+        ],
+      ]),
+      agent,
+      port,
+      history: [{ role: "user", content: "看看 App" }],
+      maxToolRounds: 8,
+      onToken: (t) => tokens.push(t),
+      onThinking: (t) => thinking.push(t),
+      onTool: (ev) =>
+        tools.push({ name: ev.name, state: ev.state, summary: ev.summary }),
+      onStatus: (p) => phases.push(p),
+    });
+
+    expect(thinking.join("")).toBe("我先读一下");
+    expect(tokens.join("")).toBe("读完了");
+    expect(result.assistantText).toBe("读完了");
+    expect(result.assistantText).not.toContain("我先读一下");
+    expect(tools).toEqual([
+      { name: "read_file", state: "start", summary: "src/App.tsx" },
+      { name: "read_file", state: "end", summary: "src/App.tsx" },
+    ]);
+    expect(result.process.steps).toEqual([
+      { type: "thinking", text: "我先读一下" },
+      {
+        type: "tool",
+        id: "c1",
+        name: "read_file",
+        status: "done",
+        summary: "src/App.tsx",
+      },
+    ]);
+    expect(phases[0]).toBe("thinking");
+    expect(phases).toContain("running");
+    expect(phases).toContain("streaming");
+  });
+
+  it("summarizes write_file path and list_files dir", async () => {
+    const files = new Map<string, string>();
+    const port = {
+      listFiles: (relativeDir?: string) =>
+        relativeDir ? [...files.keys()].filter((p) => p.startsWith(relativeDir)) : [...files.keys()],
+      readFile: (p: string) => files.get(p) ?? "",
+      writeFile: (p: string, c: string) => {
+        files.set(p, c);
+      },
+    };
+    const agent = createCoderAgent({ systemPrompt: "test" });
+    const tools: Array<{ name: string; state: string; summary?: string }> = [];
+
+    await runTurn({
+      llm: llmFromScript([
+        [
+          {
+            type: "tool_calls",
+            toolCalls: [
+              {
+                id: "c1",
+                type: "function",
+                function: {
+                  name: "list_files",
+                  arguments: JSON.stringify({}),
+                },
+              },
+              {
+                id: "c2",
+                type: "function",
+                function: {
+                  name: "list_files",
+                  arguments: JSON.stringify({ relativeDir: "src" }),
+                },
+              },
+              {
+                id: "c3",
+                type: "function",
+                function: {
+                  name: "write_file",
+                  arguments: JSON.stringify({
+                    path: "src/App.tsx",
+                    content: "export default function App(){return null}",
+                  }),
+                },
+              },
+            ],
+          },
+          { type: "finished", finishReason: "tool_calls" },
+        ],
+        [
+          { type: "content_delta", text: "好了" },
+          { type: "finished", finishReason: "stop" },
+        ],
+      ]),
+      agent,
+      port,
+      history: [{ role: "user", content: "写一下" }],
+      maxToolRounds: 8,
+      onToken: () => {},
+      onTool: (ev) =>
+        tools.push({ name: ev.name, state: ev.state, summary: ev.summary }),
+    });
+
+    expect(tools).toEqual([
+      { name: "list_files", state: "start", summary: "." },
+      { name: "list_files", state: "end", summary: "." },
+      { name: "list_files", state: "start", summary: "src" },
+      { name: "list_files", state: "end", summary: "src" },
+      { name: "write_file", state: "start", summary: "src/App.tsx" },
+      { name: "write_file", state: "end", summary: "src/App.tsx" },
+    ]);
+  });
+
+  it("returns round-limit note when maxToolRounds exhausted with thinking but no final text", async () => {
+    const files = new Map<string, string>([["src/App.tsx", "x"]]);
+    const port = {
+      listFiles: () => [...files.keys()],
+      readFile: (p: string) => files.get(p) ?? "",
+      writeFile: (p: string, c: string) => {
+        files.set(p, c);
+      },
+    };
+    const agent = createCoderAgent({ systemPrompt: "test" });
+    const tokens: string[] = [];
+    const toolRound = (id: string): LlmStreamEvent[] => [
+      { type: "content_delta", text: `想读 ${id}` },
+      {
+        type: "tool_calls",
+        toolCalls: [
+          {
+            id,
+            type: "function",
+            function: {
+              name: "read_file",
+              arguments: JSON.stringify({ path: "src/App.tsx" }),
+            },
+          },
+        ],
+      },
+      { type: "finished", finishReason: "tool_calls" },
+    ];
+
+    const result = await runTurn({
+      llm: llmFromScript([toolRound("c1"), toolRound("c2")]),
+      agent,
+      port,
+      history: [{ role: "user", content: "看一眼" }],
+      maxToolRounds: 2,
+      onToken: (t) => tokens.push(t),
+    });
+
+    expect(result.assistantText).toBe("（已达工具轮次上限）");
+    expect(tokens.join("")).toBe("（已达工具轮次上限）");
+    expect(result.process.steps.some((s) => s.type === "thinking")).toBe(true);
+    expect(
+      result.process.steps.filter((s) => s.type === "tool"),
+    ).toHaveLength(2);
+  });
 });

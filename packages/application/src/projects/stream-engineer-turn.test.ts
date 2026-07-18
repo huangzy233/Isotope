@@ -147,11 +147,24 @@ describe("beginEngineerTurn", () => {
     expect(last?.role).toBe("assistant");
     expect(last?.content).toBe("已更新 App");
     expect(last?.content).not.toBe(ASSISTANT_PLACEHOLDER);
+    expect(last?.process?.steps.some((s) => s.type === "tool")).toBe(true);
     expect(workspace.readFile(project.id, "src/App.tsx")).toContain("App");
     expect(preview.enqueueBuild).toHaveBeenCalledWith(project.id);
     expect(events.some((e) => e.type === "token" && e.text === "已更新 App")).toBe(
       true,
     );
+    expect(events.some((e) => e.type === "status" && e.phase === "thinking")).toBe(
+      true,
+    );
+    expect(
+      events.some(
+        (e) =>
+          e.type === "tool" &&
+          e.name === "write_file" &&
+          e.state === "start" &&
+          e.summary === "src/App.tsx",
+      ),
+    ).toBe(true);
     expect(
       events.some(
         (e) =>
@@ -161,6 +174,73 @@ describe("beginEngineerTurn", () => {
           e.messageId === last?.id,
       ),
     ).toBe(true);
+  });
+
+  it("does not put process text into llm history", async () => {
+    const thinkingLong =
+      "THINKING_LONG_SECRET_" + "x".repeat(200);
+    const { project, messages: seeded } = createProject(
+      {
+        ownerUserId: "demo",
+        requirement: "初始需求",
+        mode: "engineer",
+      },
+      workspace,
+    );
+    const seedAssistant = seeded.find((m) => m.role === "assistant");
+    expect(seedAssistant).toBeTruthy();
+    workspace.updateMessage(seedAssistant!.id, {
+      content: "短回复",
+      process: {
+        steps: [{ type: "thinking", text: thinkingLong }],
+      },
+    });
+
+    let capturedMessages:
+      | Array<{ role: string; content?: string | null }>
+      | undefined;
+    const base = llmFromScript([
+      [
+        { type: "content_delta", text: "下一轮" },
+        { type: "finished", finishReason: "stop" },
+      ],
+    ]);
+    const llm: LlmClient = {
+      async *complete(input) {
+        capturedMessages = input.messages.map((m) => ({
+          role: m.role,
+          content: "content" in m ? m.content : undefined,
+        }));
+        yield* base.complete(input);
+      },
+    };
+
+    const begun = beginEngineerTurn(
+      {
+        ownerUserId: "demo",
+        projectId: project.id,
+        action: "send",
+        content: "继续",
+      },
+      {
+        workspace,
+        preview: mockPreview(),
+        llm,
+        agent: createCoderAgent({ systemPrompt: "test" }),
+        maxToolRounds: 8,
+      },
+    );
+
+    expect(begun.ok).toBe(true);
+    if (!begun.ok) return;
+    await begun.run(() => {});
+
+    expect(capturedMessages).toBeDefined();
+    const joined = (capturedMessages ?? [])
+      .map((m) => (typeof m.content === "string" ? m.content : ""))
+      .join("\n");
+    expect(joined).not.toContain(thinkingLong);
+    expect(joined).toContain("短回复");
   });
 
   it("send appends user + assistant and leaves no placeholder", async () => {
