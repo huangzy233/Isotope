@@ -39,7 +39,7 @@ Isotope 作为 AI 产品的界面结构与状态机。
 | Type | 展示要点 |
 |------|----------|
 | User | 右对齐或弱区分背景；Body |
-| Agent | **角色名 + 身份标签**（如 `Alex \| 工程师`）；Badge + Body |
+| Agent | **角色名 + 身份标签**（如 `Alex \| 工程师`）；Badge + Body（GFM Markdown） |
 | System | Secondary / Metadata 语气 |
 | Tool | 见 §4 |
 | Version | 版本号 + 一句话摘要（弱边框即可） |

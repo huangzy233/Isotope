@@ -16,6 +16,7 @@ import type {
   TaskStatus,
 } from "@isotope/workspace";
 import { agentRoleLabel } from "@/components/agent-identity";
+import { MarkdownBody } from "@/components/markdown-body";
 import { Composer } from "@/components/composer";
 import { EmptyState } from "@/components/empty-state";
 import { PanelHeader } from "@/components/panel-header";
@@ -1017,9 +1018,7 @@ function MessageRow({
         ) : null}
 
         {message.content ? (
-          <p className="whitespace-pre-wrap leading-relaxed text-foreground">
-            {message.content}
-          </p>
+          <MarkdownBody content={message.content} />
         ) : showContentSkeleton ? (
           <Skeleton className="h-4 w-2/3" />
         ) : null}
