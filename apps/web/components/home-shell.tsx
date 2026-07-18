@@ -2,13 +2,14 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import type { ProjectMode } from "@isotope/workspace";
 import { Composer } from "@/components/composer";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ComposerModeMenu } from "@/components/composer-mode-menu";
 
 export function HomeShell() {
   const router = useRouter();
   const [requirement, setRequirement] = useState("");
-  const [mode, setMode] = useState("engineer");
+  const [mode, setMode] = useState<ProjectMode>("engineer");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -65,12 +66,11 @@ export function HomeShell() {
             submittingLabel="创建中…"
             submitting={submitting}
             toolbar={
-              <Tabs value={mode} onValueChange={setMode}>
-                <TabsList>
-                  <TabsTrigger value="engineer">Engineer</TabsTrigger>
-                  <TabsTrigger value="team">Team</TabsTrigger>
-                </TabsList>
-              </Tabs>
+              <ComposerModeMenu
+                mode={mode}
+                disabled={submitting}
+                onModeChange={setMode}
+              />
             }
           />
           {error ? (

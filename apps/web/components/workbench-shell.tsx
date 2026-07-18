@@ -25,7 +25,7 @@ import { CheckCircle2, ChevronUp } from "lucide-react";
 import { ToolCallGroup } from "@/components/tool-call-row";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ComposerModeMenu } from "@/components/composer-mode-menu";
 import { cn } from "@/lib/utils";
 
 const DEFAULT_CHAT_PCT = 33.333;
@@ -820,12 +820,13 @@ export function WorkbenchShell({
               submitting={submitting}
               submitLabel="发送"
               toolbar={
-                <Tabs value={mode} onValueChange={handleModeChange}>
-                  <TabsList>
-                    <TabsTrigger value="engineer">Engineer</TabsTrigger>
-                    <TabsTrigger value="team">Team</TabsTrigger>
-                  </TabsList>
-                </Tabs>
+                <ComposerModeMenu
+                  mode={mode}
+                  disabled={submitting}
+                  onModeChange={(next) => {
+                    void handleModeChange(next);
+                  }}
+                />
               }
             />
           </div>
