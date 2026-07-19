@@ -6,14 +6,9 @@ import {
   type TaskEventBus,
 } from "@isotope/application";
 import { createTeamTurnDeps } from "./agent";
+import { getPreferenceStore } from "./memory";
 import { getPreview } from "./preview";
 import { getWorkspace } from "./workspace";
-
-/** Task 4 stub; Task 7 replaces with getPreferenceStore singleton. */
-const preferencesStub = {
-  getPreferences: () => ({}),
-  upsertPreference: () => {},
-};
 
 let bus: TaskEventBus | null = null;
 let started = false;
@@ -38,7 +33,7 @@ export function ensureTaskRuntime(): void {
       const turnDeps = createTeamTurnDeps();
       await retryStuckAssignedTask(task, {
         workspace: getWorkspace(),
-        preferences: preferencesStub,
+        preferences: getPreferenceStore(),
         preview: getPreview(),
         bus: getTaskBus(),
         ...turnDeps,

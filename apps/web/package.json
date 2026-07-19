@@ -14,6 +14,7 @@
     "@isotope/application": "workspace:*",
     "@isotope/identity": "workspace:*",
     "@isotope/llm": "workspace:*",
+    "@isotope/memory": "workspace:*",
     "@isotope/preview": "workspace:*",
     "@isotope/sandbox": "workspace:*",
     "@isotope/workspace": "workspace:*",

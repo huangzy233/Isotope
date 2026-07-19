@@ -22,6 +22,9 @@ importers:
       '@isotope/llm':
         specifier: workspace:*
         version: link:../../packages/llm
+      '@isotope/memory':
+        specifier: workspace:*
+        version: link:../../packages/memory
       '@isotope/preview':
         specifier: workspace:*
         version: link:../../packages/preview
