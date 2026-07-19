@@ -1,0 +1,8 @@
+id: deepseek
+type: openai-compatible
+baseUrl: https://api.deepseek.com
+apiKeyEnv: LLM_API_KEY
+timeoutMs: 120000
+models:
+  - deepseek-v4-pro
+  - deepseek-chat
