@@ -1,14 +1,18 @@
 import {
   CODER_TOOLS,
   LEADER_TOOLS,
+  QA_TOOLS,
   REQUIREMENT_TOOLS,
   createCoderAgent,
   createLeaderAgent,
+  createQaAgent,
   createRequirementAgent,
   type CoderAgent,
   type LeaderAgent,
+  type QaAgent,
   type RequirementAgent,
 } from "@isotope/agents";
+import { loadWritePolicy, type WritePolicy } from "@isotope/application";
 import {
   createLlmRouter,
   loadLlmDefaults,
@@ -16,8 +20,9 @@ import {
   type LlmClient,
 } from "@isotope/llm";
 import { filterTools } from "./filter-tools";
-import { llmConfigDir, promptsRoot } from "./paths";
+import { llmConfigDir, promptsRoot, writePolicyPath } from "./paths";
 import { createPromptLoader } from "./prompt-loader";
+import { runTypecheck } from "./sandbox";
 
 type SharedRouter = {
   llm: LlmClient;
@@ -27,6 +32,7 @@ type SharedRouter = {
 
 let cachedRouter: SharedRouter | null = null;
 let cachedLoader: ReturnType<typeof createPromptLoader> | null = null;
+let cachedWritePolicy: WritePolicy | null = null;
 
 function resolveDefaultModel(fileDefault: string): string {
   return process.env.LLM_MODEL?.trim() || fileDefault;
@@ -67,14 +73,37 @@ export function getPromptLoader(): ReturnType<typeof createPromptLoader> {
   return cachedLoader;
 }
 
+function getWritePolicy(): WritePolicy {
+  if (!cachedWritePolicy) {
+    cachedWritePolicy = loadWritePolicy(writePolicyPath());
+  }
+  return cachedWritePolicy;
+}
+
+function createQaBundle(): { qa: QaAgent; qaModel: string } {
+  const bundle = getPromptLoader().load("review/qa-system");
+  return {
+    qa: createQaAgent({
+      systemPrompt: bundle.system,
+      tools: filterTools(QA_TOOLS, bundle.tools),
+    }),
+    qaModel: bundle.model,
+  };
+}
+
 export function createTurnDeps(): {
   llm: LlmClient;
   model: string;
   agent: CoderAgent;
   maxToolRounds: number;
+  writePolicy: WritePolicy;
+  qa: QaAgent;
+  qaModel: string;
+  runTypecheck: typeof runTypecheck;
 } {
   const { llm, maxToolRounds } = getSharedRouter();
   const bundle = getPromptLoader().load("coding/alex-system");
+  const { qa, qaModel } = createQaBundle();
   return {
     llm,
     model: bundle.model,
@@ -83,6 +112,10 @@ export function createTurnDeps(): {
       tools: filterTools(CODER_TOOLS, bundle.tools),
     }),
     maxToolRounds,
+    writePolicy: getWritePolicy(),
+    qa,
+    qaModel,
+    runTypecheck,
   };
 }
 
@@ -95,12 +128,17 @@ export function createTeamTurnDeps(): {
   coder: CoderAgent;
   coderModel: string;
   maxToolRounds: number;
+  writePolicy: WritePolicy;
+  qa: QaAgent;
+  qaModel: string;
+  runTypecheck: typeof runTypecheck;
 } {
   const { llm, maxToolRounds } = getSharedRouter();
   const loader = getPromptLoader();
   const leaderBundle = loader.load("leader/mike-system");
   const summaryBundle = loader.load("leader/mike-summary");
   const coderBundle = loader.load("coding/alex-system");
+  const { qa, qaModel } = createQaBundle();
   return {
     llm,
     leader: createLeaderAgent({
@@ -119,6 +157,10 @@ export function createTeamTurnDeps(): {
     }),
     coderModel: coderBundle.model,
     maxToolRounds,
+    writePolicy: getWritePolicy(),
+    qa,
+    qaModel,
+    runTypecheck,
   };
 }
 

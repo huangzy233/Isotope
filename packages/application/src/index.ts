@@ -66,3 +66,7 @@ export {
   isNoisyWorkspacePath,
   NOISY_WORKSPACE_SEGMENTS,
 } from "./projects/workspace-source-noise.js";
+export {
+  loadWritePolicy,
+  type WritePolicy,
+} from "./projects/write-policy.js";

@@ -23,3 +23,7 @@ export function dataRoot(): string {
 export function templatePath(): string {
   return path.join(monorepoRoot(), "templates/vite-react");
 }
+
+export function writePolicyPath(): string {
+  return path.join(monorepoRoot(), "configs/workspace/write-policy.yaml");
+}
