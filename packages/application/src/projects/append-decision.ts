@@ -1,5 +1,8 @@
 import type { WorkspaceStore } from "@isotope/workspace";
-import { DECISIONS_PATH } from "./project-memory-paths.js";
+import {
+  DECISIONS_FILE_MAX,
+  DECISIONS_PATH,
+} from "./project-memory-paths.js";
 
 function readExistingDecisions(
   workspace: WorkspaceStore,
@@ -20,14 +23,32 @@ function readExistingDecisions(
   }
 }
 
+/** Split decisions.md into `## …` sections (same rule as buildTurnContext). */
+export function splitDecisionSections(raw: string): string[] {
+  return raw.split(/(?=^## )/m).filter((s) => s.trim().length > 0);
+}
+
+function joinDecisionSections(sections: string[]): string {
+  if (sections.length === 0) return "";
+  return (
+    sections
+      .map((s) => s.replace(/^\n+/, "").replace(/\s+$/, ""))
+      .join("\n") + "\n"
+  );
+}
+
 export function appendDecision(
   workspace: WorkspaceStore,
   projectId: string,
   text: string,
   nowIso?: string,
+  fileMax: number = DECISIONS_FILE_MAX,
 ): void {
   const existing = readExistingDecisions(workspace, projectId);
   const timestamp = nowIso ?? new Date().toISOString();
-  const section = `\n## ${timestamp}\n${text.trim()}\n`;
-  workspace.writeFile(projectId, DECISIONS_PATH, existing + section);
+  const section = `## ${timestamp}\n${text.trim()}`;
+  const sections = [...splitDecisionSections(existing), section];
+  const kept =
+    sections.length > fileMax ? sections.slice(-fileMax) : sections;
+  workspace.writeFile(projectId, DECISIONS_PATH, joinDecisionSections(kept));
 }

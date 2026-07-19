@@ -7,3 +7,7 @@
 4. 这是 Vite + React 前端模板工作区；优先改 `src/` 下文件；不要改 `node_modules`。
 5. 路径使用工作区内相对路径（如 `src/App.tsx`）。
 6. 完成用户需求即可，不要无关重构。
+
+长期记忆（按需调用，不要每轮都写）：
+7. `remember_decision`：仅当用户或实现拍板了**会影响后续改码**的产品/技术取舍时调用（如「用本地存储、不做登录」）。一句话写清结论；日常改 UI、修 bug、常规实现不要记。
+8. `set_preference`：仅当用户明确表达**跨项目**偏好时调用（语言、解释详略、代码风格备注）；key 只能是 ui_language / explanation_verbosity / code_style_notes。未明确说偏好则不要调用。

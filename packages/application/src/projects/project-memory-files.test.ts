@@ -55,4 +55,24 @@ describe("project memory files", () => {
     expect(body).toContain("## 2026-07-19T01:00:00.000Z");
     expect(body).toContain("不做登录");
   });
+
+  it("appendDecision keeps only the newest fileMax sections", () => {
+    for (let i = 0; i < 5; i++) {
+      appendDecision(
+        workspace,
+        projectId,
+        `决策${i}`,
+        `2026-07-19T0${i}:00:00.000Z`,
+        3,
+      );
+    }
+    const body = workspace.readFile(projectId, DECISIONS_PATH);
+    expect(body).not.toContain("决策0");
+    expect(body).not.toContain("决策1");
+    expect(body).toContain("决策2");
+    expect(body).toContain("决策3");
+    expect(body).toContain("决策4");
+    const headings = body.match(/^## /gm) ?? [];
+    expect(headings).toHaveLength(3);
+  });
 });

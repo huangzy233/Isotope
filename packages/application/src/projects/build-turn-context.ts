@@ -1,7 +1,12 @@
 import type { PreferenceKey } from "@isotope/memory";
 import type { Message, Project } from "@isotope/workspace";
 import { ASSISTANT_PLACEHOLDER } from "./placeholder.js";
-import { DECISIONS_PATH, PRODUCT_SPEC_PATH } from "./project-memory-paths.js";
+import {
+  DECISIONS_CONTEXT_TAIL,
+  DECISIONS_PATH,
+  PRODUCT_SPEC_PATH,
+} from "./project-memory-paths.js";
+import { splitDecisionSections } from "./append-decision.js";
 
 export type BuildTurnContextInput = {
   messages: Message[];
@@ -20,7 +25,7 @@ export type TurnContext = {
 type HistoryLine = { role: "user" | "assistant"; content: string };
 
 const DEFAULT_WINDOW_N = 20;
-const DEFAULT_DECISIONS_TAIL_K = 20;
+const DEFAULT_DECISIONS_TAIL_K = DECISIONS_CONTEXT_TAIL;
 const DEFAULT_DIGEST_MAX_CHARS = 2000;
 
 function filterAndMapMessages(messages: Message[]): HistoryLine[] {
@@ -76,7 +81,7 @@ function buildDecisionsSection(
 ): string | null {
   const raw = readProjectFile(DECISIONS_PATH);
   if (raw == null || raw.trim() === "") return null;
-  const sections = raw.split(/(?=^## )/m).filter((s) => s.trim().length > 0);
+  const sections = splitDecisionSections(raw);
   if (sections.length === 0) return null;
   const tail = sections
     .slice(-decisionsTailK)
