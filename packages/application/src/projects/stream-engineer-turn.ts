@@ -404,7 +404,9 @@ export function beginEngineerTurn(
                 ...qaCallbacks,
               });
 
-              const qaText = qaResult.assistantText || "（无质检报告）";
+              const qaText = !checkRan
+                ? "【质检结果】FAIL\n质检未执行 run_check"
+                : qaResult.assistantText || "（无质检报告）";
               deps.workspace.updateMessage(qaMsg.id, {
                 content: qaText,
                 process: qaResult.process,

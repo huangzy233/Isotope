@@ -1,10 +1,29 @@
 import { readFileSync } from "node:fs";
+import { posix } from "node:path";
 import { parse } from "yaml";
 
 export type WritePolicy = { allow: string[] };
 
-function normalizeRel(p: string): string {
-  return p.replace(/\\/g, "/").replace(/^\.\//, "");
+/** Normalize a relative path for ACL matching. Returns null if unsafe/absolute. */
+export function normalizePolicyPath(relativePath: string): string | null {
+  const raw = relativePath.replace(/\\/g, "/");
+  if (!raw || posix.isAbsolute(raw) || /^[A-Za-z]:/.test(raw)) {
+    return null;
+  }
+
+  const normalized = posix.normalize(raw);
+  if (
+    !normalized ||
+    normalized === "." ||
+    posix.isAbsolute(normalized) ||
+    normalized === ".." ||
+    normalized.startsWith("../") ||
+    normalized.split("/").includes("..")
+  ) {
+    return null;
+  }
+
+  return normalized.replace(/^\.\//, "");
 }
 
 function matchAllow(pattern: string, rel: string): boolean {
@@ -16,7 +35,8 @@ function matchAllow(pattern: string, rel: string): boolean {
 }
 
 export function isPathAllowed(policy: WritePolicy, relativePath: string): boolean {
-  const rel = normalizeRel(relativePath);
+  const rel = normalizePolicyPath(relativePath);
+  if (rel === null) return false;
   return policy.allow.some((pattern) => matchAllow(pattern, rel));
 }
 
@@ -34,12 +54,13 @@ export function createWritePolicyPort<
   return {
     ...port,
     writeFile: (relativePath: string, content: string) => {
-      if (!isPathAllowed(policy, relativePath)) {
+      const rel = normalizePolicyPath(relativePath);
+      if (rel === null || !policy.allow.some((pattern) => matchAllow(pattern, rel))) {
         throw new Error(
           `不允许修改受保护文件：${relativePath}；请只改允许路径（如 src/）`,
         );
       }
-      port.writeFile(relativePath, content);
+      port.writeFile(rel, content);
     },
   };
 }

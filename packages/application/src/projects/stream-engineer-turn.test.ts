@@ -114,6 +114,23 @@ function withAutoQa(
   };
 }
 
+/** QA never calls run_check — orchestration must force FAIL copy. */
+function withQaNeverCheck(base: LlmClient): LlmClient {
+  return {
+    async *complete(input) {
+      if (isQaTools(input.tools)) {
+        yield {
+          type: "content_delta" as const,
+          text: "看起来没问题，跳过检查",
+        };
+        yield { type: "finished" as const, finishReason: "stop" };
+        return;
+      }
+      yield* base.complete(input);
+    },
+  };
+}
+
 function llmFromScript(rounds: LlmStreamEvent[][]): LlmClient {
   let i = 0;
   return {
@@ -269,6 +286,84 @@ describe("beginEngineerTurn", () => {
     expect(
       events.some((e) => e.type === "speaker" && e.agentName === "QA"),
     ).toBe(true);
+  });
+
+  it("forces FAIL copy and skips preview when QA never calls run_check", async () => {
+    const { project } = createProject(
+      {
+        ownerUserId: "demo",
+        requirement: "做一个空页面",
+        mode: "engineer",
+      },
+      workspace,
+    );
+    const preview = mockPreview();
+
+    const begun = beginEngineerTurn(
+      {
+        ownerUserId: "demo",
+        projectId: project.id,
+        action: "continue",
+      },
+      {
+        workspace,
+        preferences: fakePreferences,
+        preview,
+        llm: withQaNeverCheck(
+          llmFromScript([
+            [
+              {
+                type: "tool_calls",
+                toolCalls: [
+                  {
+                    id: "c1",
+                    type: "function",
+                    function: {
+                      name: "write_file",
+                      arguments: JSON.stringify({
+                        path: "src/App.tsx",
+                        content:
+                          "export default function App(){return null}",
+                      }),
+                    },
+                  },
+                ],
+              },
+              { type: "finished", finishReason: "tool_calls" },
+            ],
+            [
+              { type: "content_delta", text: "已更新 App" },
+              { type: "finished", finishReason: "stop" },
+            ],
+          ]),
+        ),
+        agent: createCoderAgent({ systemPrompt: "test" }),
+        model: "test-model",
+        maxToolRounds: 8,
+        ...engineerExtras(),
+      },
+    );
+
+    expect(begun.ok).toBe(true);
+    if (!begun.ok) return;
+
+    const events = await runAndCollect(project.id, begun.run);
+
+    expect(preview.enqueueBuild).not.toHaveBeenCalled();
+    expect(
+      events.some(
+        (e) =>
+          e.type === "done" &&
+          e.filesChanged === true &&
+          e.previewEnqueued === false,
+      ),
+    ).toBe(true);
+    const qaMessages = workspace
+      .listMessages(project.id)
+      .filter((m) => m.agentName === "QA");
+    expect(qaMessages.length).toBeGreaterThanOrEqual(1);
+    expect(qaMessages.at(-1)?.content).toContain("【质检结果】FAIL");
+    expect(qaMessages.at(-1)?.content).toContain("质检未执行 run_check");
   });
 
   it("does not enqueue preview when QA checkOk stays false through max repairs", async () => {

@@ -19,6 +19,28 @@ describe("write-policy", () => {
     expect(isPathAllowed(policy, ".project/memory/decisions.md")).toBe(false);
   });
 
+  it("rejects path traversal that would escape allow list after normalize", () => {
+    const policy = { allow: ["src/**", "index.html"] };
+    expect(isPathAllowed(policy, "src/../package.json")).toBe(false);
+    expect(isPathAllowed(policy, "src/foo/../../vite.config.ts")).toBe(false);
+    expect(isPathAllowed(policy, "src/App.tsx")).toBe(true);
+    expect(isPathAllowed(policy, "index.html")).toBe(true);
+
+    const writes: string[] = [];
+    const port = createWritePolicyPort(policy, {
+      writeFile: (p: string) => {
+        writes.push(p);
+      },
+    });
+    expect(() => port.writeFile("src/../package.json", "x")).toThrow(
+      /不允许修改/,
+    );
+    expect(() =>
+      port.writeFile("src/foo/../../vite.config.ts", "x"),
+    ).toThrow(/不允许修改/);
+    expect(writes).toEqual([]);
+  });
+
   it("createWritePolicyPort blocks denied writes", () => {
     const writes: string[] = [];
     const port = createWritePolicyPort(

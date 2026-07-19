@@ -146,6 +146,23 @@ function withAutoQa(
   };
 }
 
+/** QA never calls run_check — orchestration must force FAIL copy. */
+function withQaNeverCheck(base: LlmClient): LlmClient {
+  return {
+    async *complete(input) {
+      if (isQaTools(input.tools)) {
+        yield {
+          type: "content_delta" as const,
+          text: "看起来没问题，跳过检查",
+        };
+        yield { type: "finished" as const, finishReason: "stop" };
+        return;
+      }
+      yield* base.complete(input);
+    },
+  };
+}
+
 function teamDeps(
   workspace: ReturnType<typeof createFsSqliteWorkspace>,
   llm: LlmClient,
@@ -799,6 +816,57 @@ describe("beginTeamTurn", () => {
     expect(workspace.listMessages(project.id).at(-1)?.content).toBe(
       "本轮任务已全部完成，标题已按要求更新。",
     );
+  });
+
+  it("forces FAIL copy and skips preview when QA never calls run_check", async () => {
+    const { project, messages: seeded } = createProject(
+      {
+        ownerUserId: "demo",
+        requirement: "统一文案",
+        mode: "team",
+      },
+      workspace,
+    );
+    workspace.updateMessage(seeded.find((m) => m.role === "assistant")!.id, {
+      content: "先前规划",
+    });
+
+    const preview = mockPreview();
+    const rounds: LlmStreamEvent[][] = [
+      ...mikeAssignRounds,
+      ...alexWriteRounds,
+    ];
+
+    const begun = beginTeamTurn(
+      {
+        ownerUserId: "demo",
+        projectId: project.id,
+        action: "send",
+        content: "请改首页标题",
+      },
+      teamDeps(workspace, withQaNeverCheck(llmFromScript(rounds)), preview),
+    );
+
+    expect(begun.ok).toBe(true);
+    if (!begun.ok) return;
+    const events = await runAndCollect(project.id, begun.run);
+
+    expect(preview.enqueueBuild).not.toHaveBeenCalled();
+    expect(
+      events.some(
+        (e) =>
+          e.type === "done" &&
+          e.filesChanged === true &&
+          e.previewEnqueued === false,
+      ),
+    ).toBe(true);
+
+    const qaMessages = workspace
+      .listMessages(project.id)
+      .filter((m) => m.agentName === "QA");
+    expect(qaMessages.length).toBeGreaterThanOrEqual(1);
+    expect(qaMessages.at(-1)?.content).toContain("【质检结果】FAIL");
+    expect(qaMessages.at(-1)?.content).toContain("质检未执行 run_check");
   });
 
   it("QA FAIL through max repairs skips Mike summary and preview", async () => {
