@@ -35,6 +35,7 @@ export type LlmStreamEvent =
 
 export type LlmClient = {
   complete(input: {
+    model: string;
     messages: LlmMessage[];
     tools?: LlmToolDefinition[];
     signal?: AbortSignal;
@@ -44,7 +45,6 @@ export type LlmClient = {
 export type OpenAiCompatibleConfig = {
   apiKey: string;
   baseUrl: string;
-  model: string;
   timeoutMs: number;
   fetch?: typeof fetch;
 };

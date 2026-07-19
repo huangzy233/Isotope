@@ -20,13 +20,13 @@ describe("createOpenAiCompatibleClient", () => {
     const client = createOpenAiCompatibleClient({
       apiKey: "sk-test",
       baseUrl: "https://example.com/v1",
-      model: "gpt-test",
       timeoutMs: 5000,
       fetch: fetchMock,
     });
 
     const events = [];
     for await (const ev of client.complete({
+      model: "deepseek-v4-pro",
       messages: [{ role: "user", content: "hi" }],
     })) {
       events.push(ev);
@@ -37,7 +37,18 @@ describe("createOpenAiCompatibleClient", () => {
     expect(url).toBe("https://example.com/v1/chat/completions");
     expect(init?.method).toBe("POST");
     const payload = JSON.parse(String(init?.body));
-    expect(payload.model).toBe("gpt-test");
+    expect(payload.model).toBe("deepseek-v4-pro");
+
+    for await (const _ of client.complete({
+      model: "other-model",
+      messages: [{ role: "user", content: "hi" }],
+    })) {
+      /* drain */
+    }
+    const secondPayload = JSON.parse(
+      String(fetchMock.mock.calls[1]![1]?.body),
+    );
+    expect(secondPayload.model).toBe("other-model");
     expect(payload.stream).toBe(true);
     expect(events).toEqual([
       { type: "content_delta", text: "你" },
@@ -58,12 +69,12 @@ describe("createOpenAiCompatibleClient", () => {
     const client = createOpenAiCompatibleClient({
       apiKey: "k",
       baseUrl: "https://example.com/v1",
-      model: "m",
       timeoutMs: 5000,
       fetch: fetchMock as unknown as typeof fetch,
     });
     const events = [];
     for await (const ev of client.complete({
+      model: "m",
       messages: [{ role: "user", content: "x" }],
       tools: [
         {

@@ -111,7 +111,7 @@ export function createOpenAiCompatibleClient(
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          model: config.model,
+          model: input.model,
           messages: input.messages,
           tools: input.tools,
           stream: true,
