@@ -25,7 +25,7 @@ isotope/
 │   ├── preview/                     # 构建队列 + 预览发布
 │   ├── sandbox/                     # 运行环境抽象（本地进程等）
 │   ├── deploy/                      # 发布 Provider（后续）
-│   ├── memory/                      # 长期记忆（后续）
+│   ├── memory/                      # 用户 Preference 落库；项目 Spec/Decision 在 workspace `.project/memory`
 │   └── application/                 # 跨领域用例（Application 层）
 │
 ├── prompts/                         # Prompt 资产（禁止硬编码进业务代码）
@@ -93,7 +93,7 @@ packages/<domain>/
 | `packages/preview` | Build Queue、构建状态、预览 revision、静态产物发布 |
 | `packages/sandbox` | 「在哪执行构建/命令」的抽象（本机子进程 → 未来容器） |
 | `packages/deploy` | 发布上线 Provider 端口（P2，先留骨架） |
-| `packages/memory` | 跨项目长期记忆端口（P2，先留骨架） |
+| `packages/memory` | 用户 Preference 落库；项目 Spec/Decision 在 workspace `.project/memory` |
 | `packages/application` | 跨领域用例：`Login`、`CreateProject`、`SendMessage`、`CompleteTask`、`RebuildPreview` |
 | `prompts/*` | 按领域版本化 Prompt 模板 |
 | `configs/*` | Agent/模式/LLM/预览等 YAML·JSON 配置 |

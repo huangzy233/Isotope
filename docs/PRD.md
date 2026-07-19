@@ -30,7 +30,7 @@
   - 智能体驱动生成应用，并以可视化网页展示。
   - 真实交互 + 数据持久化 + 可测试在线链接。
   - Plan / Team 开关可独立开关并组合（都关 = Engineer）；Team 具备任务分配；Plan 具备需求澄清确认后再执行。
-  - Agent 长期记忆系统（产品级 + 用户级；细则待定）。
+  - Agent 记忆系统（短期窗口压缩；长期：用户 Preference 落库 + 项目内 Product Spec / Decision 文档）。
   - 代码变更后自动构建，App Viewer 实时更新。
   - 内置账号登录，不开放注册。
 
@@ -46,7 +46,7 @@
 - 模式开关：Plan / Team（可组合；都关 = Engineer）
 - Team：Leader 任务分配与完成
 - Plan：Pat 澄清需求 → 推荐路径 → 规格说明 → 用户确认后执行（可与 Team 组合则交 Leader）
-- 记忆系统（Agent 长期记忆；产品级 / 用户级分类与细则稍后讨论）
+- 记忆系统（短期 context 窗口；长期 Preference 落库 + `.project/memory` 产品文档；见 §6.2.1 / §7.13）
 - 自动构建与预览实时更新
 - 轻量版本记录（版本卡片）
 - 断线重连（进行中回合 / 任务状态在刷新或重新登录后可恢复，不因客户端断开误标「生成失败」）
@@ -145,10 +145,16 @@
   - Plan：必须先由 Pat（产品）根据用户初始输入通过提问收集需求，给出推荐路径（用户可选编号如 1/2/3/4，或自行定义），并输出需求规格说明供审阅；用户以 OK/确认等肯定性回复确认后，关闭 Plan 并开始执行——仅 Plan 时交给工程师（Alex）；Plan 与 Team 同时开启时交给 Leader（Mike）再走任务分配。
 - 规则 G：当前 Plan / Team 开关状态需持久化到项目，刷新后保持。
 
-### 6.2.1 记忆系统（占位）
+### 6.2.1 记忆系统
 
-- 规则 G1：系统需具备 Agent 长期记忆能力，至少区分产品级与用户级（细则、类型划分与读写时机稍后讨论并回写本 PRD）。
-- 规则 G2：记忆按登录用户隔离；产品级记忆默认绑定项目（除非后续设计明确支持跨项目）。
+- 规则 G1：系统具备 Agent **短期**与**长期**记忆能力。
+  - 短期：项目对话进入 LLM 前经统一窗口压缩（最近 N 条原文 + 更早消息启发式摘要）；`process`（思考/工具摘要）不进 LLM history；回合内超大 tool 结果截断。
+  - 长期类型（P0）：
+    - **Preference（用户级）**：跨项目；仅此类落库；按登录用户隔离（`@isotope/memory`）。
+    - **Product Spec（产品级）**：绑定项目；存 `workspace/.project/memory/product-spec.md`；Plan 确认时写入。
+    - **Decision（产品级）**：绑定项目；存 `workspace/.project/memory/decisions.md`（追加）；经显式 tool 写入。
+- 规则 G2：Preference 按登录用户隔离；Product Spec / Decision 默认绑定项目、不进跨项目 DB；读写经 workspace / memory 端口，Agent 不直碰 `data/**`。
+- 规则 G3：长期记忆写入须显式（tool 或 Plan 确认双写）；禁止从全文对话静默自动抽取。注入为确定性组装（无向量检索）。细则见 `docs/superpowers/specs/2026-07-19-agent-memory-design.md`。
 
 ### 6.3 生成、构建与预览
 
@@ -167,7 +173,7 @@
 
 - 规则 O：本阶段不做开放注册、Publish 上线配置、Race、Deep Research、上传、Remix 完整能力。
 - 规则 P：若实现编辑器 / 文件视图，默认只读，不要求在线改码保存。
-- 规则 Q：记忆系统的具体记忆类型、存储形态与注入策略以后续讨论结论为准；未定稿前不阻塞 Plan / Engineer / Team 主流程交付，但 P0 必须保留可落地的端口与最小可用行为（或明确阶段性 AC）。
+- 规则 Q：记忆系统以 §6.2.1 / §7.13 与 `docs/superpowers/specs/2026-07-19-agent-memory-design.md` 为准；P0 须落地 Preference 端口、项目内 Spec/Decision 文档与短期窗口组装。
 - 规则 R（P1）：Agent 工具 / 路径 / 命令须受权限策略约束；越权拒绝须可观测。本条不等于 P2 的账号 RBAC / 开放注册。
 - 规则 S（P1）：Prompt 可通过 meta / 配置指定模型；未指定则使用全局默认；模型绑定不硬编码进业务 TS Prompt 字符串。
 
@@ -286,13 +292,16 @@
   - AC5：在需求未确认前，不应出现工程师已完成改码并触发成功构建的主路径（允许 Pat 纯对话澄清）。
   - AC6：同一初始需求在 Engineer 与 Plan 下的交互路径肉眼可区分。
 
-### 7.13 记忆系统（细则待定）
+### 7.13 记忆系统
 
-- 需求说明：为 Agent 提供长期记忆能力，至少区分产品级与用户级；具体记忆类型、写入 / 检索 / 注入策略稍后讨论并回写本节 AC。
-- 验收标准（阶段性占位，讨论后替换）：
-  - AC1：存在可识别的记忆能力入口（领域包 / 端口或等价模块），且按登录用户隔离。
-  - AC2：至少能持久化并在后续回合中被 Agent 使用一类记忆（具体类型待定）；刷新后仍可恢复。
-  - AC3：详细类型划分（如 Product / Project / Decision / Knowledge / User Preference 等）与完整 AC 在设计讨论定稿后补充；未定稿前本条不作为阻断其它 P0 演示的硬门槛，但不得从 P0 列表删除。
+- 需求说明：为 Agent 提供短期 context 窗口压缩，以及长期记忆——用户级 Preference（落库）与产品级 Product Spec / Decision（项目内 `.project/memory` 文档）。写入显式、注入确定性。设计见 `docs/superpowers/specs/2026-07-19-agent-memory-design.md`。
+- 验收标准：
+  - AC1：存在 `@isotope/memory`（或等价）Preference 端口；按登录用户隔离——用户 A 的偏好不可被用户 B 的回合注入。
+  - AC2：Preference 写入后，同一用户另一项目的后续回合 LLM context 中可出现该偏好；刷新后仍可恢复。
+  - AC3：Plan 确认需求后，项目 workspace 存在 `.project/memory/product-spec.md`，且内容与确认摘要一致；后续 Engineer/Team 回合 context 含该规格（文件优先于仅 DB 字段重复前插）。
+  - AC4：通过 `remember_decision`（或等价）写入后，`.project/memory/decisions.md` 追加条目；后续回合 context 可注入该决策。
+  - AC5：项目消息数超过窗口 N 时，发给 LLM 的 history 不含全量最早原文，并含对更早对话的摘要合成；`Message.process` 仍不进入 LLM history。
+  - AC6：回合内单条 tool 结果超过上限时被截断，且不导致回合崩溃。
 
 ### 7.14 Agent 安全与权限治理（P1）
 
@@ -315,7 +324,7 @@
 ## 8. 成功标准
 
 - 标准 A（笔试硬性）：公网可访问；真实交互；数据持久化；智能体驱动生成 + 可视化展示；非纯静态 PoC。
-- 标准 B（范围完成度）：第 7 节全部 P0 验收标准通过（记忆系统以 7.13 阶段性 AC 为准，细则定稿后升级）。
+- 标准 B（范围完成度）：第 7 节全部 P0 验收标准通过（含 7.13 记忆系统 AC）。
 - 标准 C（模式可感知）：评审人 2 分钟内能区分 Engineer、Team、Plan（及 Plan∧Team）的差异。
 - 标准 D（闭环完整）：任意一次成功修改，均可观察到「改码 → 自动构建 → 预览更新」。
 - 标准 E（公网安全底线）：无开放注册；未登录不可用核心能力；演示账号可文档说明。
@@ -329,7 +338,7 @@
 - 方向 C：支持文件上传上下文、Issue 一键修复，提高迭代效率。
 - 方向 D：真实 Publish、域名、SEO、权限与多人协作。
 - 方向 E：接入更完整的多智能体角色（PM / 架构师 / 数据 / SEO）与可观测任务看板。
-- 方向 F：记忆系统定稿后，补齐产品级 / 用户级记忆的完整类型、治理与可观测性。
+- 方向 F：在 P0 Preference / Spec / Decision 之上，补齐 Knowledge / Lesson、向量检索、治理与可观测性。
 
 ---
 
@@ -341,7 +350,7 @@
 - 完整 Remix / App World
 - 真实云资源、支付、自定义域名、SEO / Ads 配置后台
 - 声音通知、积分、社区、升级付费墙
-- 跨项目记忆治理、记忆可视化后台等扩展能力（基础记忆仍为 P0 占位，见 7.13）
+- 跨项目 Product Spec、记忆可视化后台、向量检索等扩展能力（P0 基础记忆见 7.13）
 
 ## 附录 B：建议演示脚本（评审用）
 
