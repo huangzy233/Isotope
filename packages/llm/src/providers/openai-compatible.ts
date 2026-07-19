@@ -96,6 +96,32 @@ async function* parseSseStream(
   }
 }
 
+function namedToolSnapshot(
+  byIndex: Map<number, LlmToolCall>,
+): Array<{ id: string; name: string }> {
+  return aggregateToolCalls(byIndex)
+    .filter((c) => c.id.length > 0 && c.function.name.length > 0)
+    .map((c) => ({
+      id: c.id,
+      name: c.function.name,
+    }));
+}
+
+/** True when partial args already contain a closed label field (path / dir). */
+function hasPeekableToolLabel(name: string, argsSoFar: string): boolean {
+  if (name === "read_file" || name === "write_file") {
+    return /"path"\s*:\s*"(?:\\.|[^"\\])*"/.test(argsSoFar);
+  }
+  if (name === "list_files") {
+    return (
+      argsSoFar.includes("{") &&
+      (/"relativeDir"\s*:\s*"(?:\\.|[^"\\])*"/.test(argsSoFar) ||
+        argsSoFar.includes("}"))
+    );
+  }
+  return false;
+}
+
 export function createOpenAiCompatibleClient(
   config: OpenAiCompatibleConfig,
 ): LlmClient {
@@ -131,6 +157,8 @@ export function createOpenAiCompatibleClient(
 
       const toolCallsByIndex = new Map<number, LlmToolCall>();
       let finishReason: string | null = null;
+      let emittedToolCallsBegin = false;
+      const summaryArgsEmitted = new Set<string>();
 
       for await (const chunk of parseSseStream(response.body)) {
         const choice = chunk.choices?.[0];
@@ -156,14 +184,39 @@ export function createOpenAiCompatibleClient(
                 arguments: delta.function?.arguments ?? "",
               },
             });
-            continue;
+          } else {
+            if (delta.id) existing.id = delta.id;
+            if (delta.function?.name) {
+              existing.function.name = delta.function.name;
+            }
+            if (delta.function?.arguments) {
+              existing.function.arguments += delta.function.arguments;
+            }
           }
-          if (delta.id) existing.id = delta.id;
-          if (delta.function?.name) {
-            existing.function.name = delta.function.name;
+
+          if (!emittedToolCallsBegin) {
+            const named = namedToolSnapshot(toolCallsByIndex);
+            if (named.length > 0) {
+              emittedToolCallsBegin = true;
+              yield { type: "tool_calls_begin", toolCalls: named };
+            }
           }
-          if (delta.function?.arguments) {
-            existing.function.arguments += delta.function.arguments;
+
+          const call = toolCallsByIndex.get(delta.index);
+          if (
+            call &&
+            call.id &&
+            call.function.name &&
+            !summaryArgsEmitted.has(call.id) &&
+            hasPeekableToolLabel(call.function.name, call.function.arguments)
+          ) {
+            summaryArgsEmitted.add(call.id);
+            yield {
+              type: "tool_call_args",
+              id: call.id,
+              name: call.function.name,
+              arguments: call.function.arguments,
+            };
           }
         }
       }

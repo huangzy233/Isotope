@@ -89,6 +89,8 @@ type StreamHandlers = {
     assignee: string;
   }) => void;
   onToken: (text: string) => void;
+  onTokenClear?: () => void;
+  onThinkingClear?: () => void;
   onDone: (data: StreamDoneData) => void;
   onError: (message: string) => void;
   /** Stream ended without a terminal event (or fetch threw). Prefer over onError for transport. */
@@ -131,27 +133,75 @@ function updateMessageById(
   return copy;
 }
 
+/**
+ * Map optimistic `local_asst_*` → server id on done.
+ * Do not rename an already-real message onto another id (e.g. QA row → Alex id),
+ * which would create duplicate React keys.
+ */
+function adoptDoneMessageId(
+  prev: Message[],
+  currentId: string,
+  doneMessageId: string,
+): Message[] {
+  if (!doneMessageId || currentId === doneMessageId) return prev;
+  if (!currentId.startsWith("local_")) return prev;
+  if (prev.some((m) => m.id === doneMessageId)) {
+    return prev.filter((m) => m.id !== currentId);
+  }
+  return updateMessageById(prev, currentId, (m) => ({
+    ...m,
+    id: doneMessageId,
+  }));
+}
+
 function mergeThinking(message: Message, text: string): Message {
   const steps = [...(message.process?.steps ?? [])];
   const last = steps.at(-1);
   if (last?.type === "thinking") {
     steps[steps.length - 1] = { type: "thinking", text: last.text + text };
-  } else {
-    steps.push({ type: "thinking", text });
+    return { ...message, process: { steps } };
   }
+
+  let i = steps.length - 1;
+  while (i >= 0 && steps[i]?.type === "tool") {
+    const tool = steps[i] as { type: "tool"; status: string };
+    if (tool.status !== "running") {
+      steps.push({ type: "thinking", text });
+      return { ...message, process: { steps } };
+    }
+    i -= 1;
+  }
+  if (i >= 0 && steps[i]?.type === "thinking") {
+    const prev = steps[i] as { type: "thinking"; text: string };
+    steps[i] = { type: "thinking", text: prev.text + text };
+    return { ...message, process: { steps } };
+  }
+  steps.splice(i + 1, 0, { type: "thinking", text });
   return { ...message, process: { steps } };
 }
 
 function applyToolStep(message: Message, ev: ToolStreamEvent): Message {
   const steps = [...(message.process?.steps ?? [])];
   if (ev.state === "start") {
-    steps.push({
-      type: "tool",
-      id: ev.id,
-      name: ev.name,
-      status: "running",
-      summary: ev.summary,
-    });
+    const idx = steps.findIndex((s) => s.type === "tool" && s.id === ev.id);
+    if (idx >= 0 && steps[idx]?.type === "tool") {
+      const prev = steps[idx];
+      steps[idx] = {
+        type: "tool",
+        id: prev.id,
+        name: ev.name || prev.name,
+        status: "running",
+        summary: ev.summary ?? prev.summary,
+      };
+    } else {
+      steps.push({
+        type: "tool",
+        id: ev.id,
+        name: ev.name,
+        status: "running",
+        summary: ev.summary,
+      });
+    }
   } else {
     const status = ev.ok === false ? "error" : "done";
     const idx = steps.findIndex((s) => s.type === "tool" && s.id === ev.id);
@@ -292,6 +342,10 @@ async function consumeEngineerStream(
           });
         } else if (event === "token" && typeof data.text === "string") {
           handlers.onToken(data.text);
+        } else if (event === "token_clear") {
+          handlers.onTokenClear?.();
+        } else if (event === "thinking_clear") {
+          handlers.onThinkingClear?.();
         } else if (event === "done") {
           terminal = true;
           const done: StreamDoneData = {
@@ -737,16 +791,36 @@ export function WorkbenchShell({
           })),
         );
       },
+      onTokenClear: () => {
+        const id = currentAssistantIdRef.current;
+        if (!id) return;
+        setMessages((prev) =>
+          updateMessageById(prev, id, (m) => ({ ...m, content: "" })),
+        );
+      },
+      onThinkingClear: () => {
+        const id = currentAssistantIdRef.current;
+        if (!id) return;
+        setMessages((prev) =>
+          updateMessageById(prev, id, (m) => {
+            const steps = [...(m.process?.steps ?? [])];
+            while (steps.at(-1)?.type === "thinking") {
+              steps.pop();
+            }
+            return {
+              ...m,
+              process: steps.length > 0 ? { steps } : undefined,
+            };
+          }),
+        );
+      },
       onDone: (data) => {
         const id = currentAssistantIdRef.current;
         if (id) {
-          setMessages((prev) =>
-            updateMessageById(prev, id, (m) => ({
-              ...m,
-              id: data.messageId,
-            })),
-          );
-          currentAssistantIdRef.current = data.messageId;
+          setMessages((prev) => adoptDoneMessageId(prev, id, data.messageId));
+          if (id.startsWith("local_") && data.messageId) {
+            currentAssistantIdRef.current = data.messageId;
+          }
         }
         reconnectAttemptRef.current = 0;
         setError(null);
@@ -837,6 +911,12 @@ export function WorkbenchShell({
           continueFlightByProject.get(project.id)?.handlers.onTool?.(ev),
         onToken: (text) =>
           continueFlightByProject.get(project.id)?.handlers.onToken(text),
+        onTokenClear: () =>
+          continueFlightByProject.get(project.id)?.handlers.onTokenClear?.(),
+        onThinkingClear: () =>
+          continueFlightByProject
+            .get(project.id)
+            ?.handlers.onThinkingClear?.(),
         onDone: (data) => {
           continueFlightByProject.get(project.id)?.handlers.onDone(data);
           releaseIfOwned();
@@ -945,16 +1025,36 @@ export function WorkbenchShell({
           })),
         );
       },
+      onTokenClear: () => {
+        const id = currentAssistantIdRef.current;
+        if (!id) return;
+        setMessages((prev) =>
+          updateMessageById(prev, id, (m) => ({ ...m, content: "" })),
+        );
+      },
+      onThinkingClear: () => {
+        const id = currentAssistantIdRef.current;
+        if (!id) return;
+        setMessages((prev) =>
+          updateMessageById(prev, id, (m) => {
+            const steps = [...(m.process?.steps ?? [])];
+            while (steps.at(-1)?.type === "thinking") {
+              steps.pop();
+            }
+            return {
+              ...m,
+              process: steps.length > 0 ? { steps } : undefined,
+            };
+          }),
+        );
+      },
       onDone: (data) => {
         const id = currentAssistantIdRef.current;
         if (id) {
-          setMessages((prev) =>
-            updateMessageById(prev, id, (m) => ({
-              ...m,
-              id: data.messageId,
-            })),
-          );
-          currentAssistantIdRef.current = data.messageId;
+          setMessages((prev) => adoptDoneMessageId(prev, id, data.messageId));
+          if (id.startsWith("local_") && data.messageId) {
+            currentAssistantIdRef.current = data.messageId;
+          }
         }
         setAgentStatus("idle");
         setSubmitting(false);

@@ -4,10 +4,29 @@ import type { Message, WorkspaceStore } from "@isotope/workspace";
 const FALLBACK = "代码已更新";
 const MAX_SUMMARY_CHARS = 80;
 
+function isQaMessage(m: Message): boolean {
+  if (m.agentName === "QA") return true;
+  const text = m.content.trim();
+  return (
+    text.startsWith("【质检结果】") ||
+    text.includes("质检结果") ||
+    text.includes("质检未执行")
+  );
+}
+
+function isPreferableAssistant(m: Message): boolean {
+  return (
+    m.role === "assistant" &&
+    Boolean(m.content.trim()) &&
+    !m.versionId &&
+    !isQaMessage(m)
+  );
+}
+
 export function pickVersionContext(messages: Message[]): string {
   for (let i = messages.length - 1; i >= 0; i -= 1) {
     const m = messages[i]!;
-    if (m.role === "assistant" && m.content.trim() && !m.versionId) {
+    if (isPreferableAssistant(m)) {
       return m.content.trim();
     }
   }
@@ -52,6 +71,9 @@ export async function summarizeVersionChange(
   }
 }
 
-export function resolveVersionContext(workspace: WorkspaceStore, projectId: string): string {
+export function resolveVersionContext(
+  workspace: WorkspaceStore,
+  projectId: string,
+): string {
   return pickVersionContext(workspace.listMessages(projectId));
 }

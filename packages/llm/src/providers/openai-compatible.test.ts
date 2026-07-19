@@ -89,6 +89,10 @@ describe("createOpenAiCompatibleClient", () => {
     })) {
       events.push(ev);
     }
+    expect(events[0]).toEqual({
+      type: "tool_calls_begin",
+      toolCalls: [{ id: "call_1", name: "write_file" }],
+    });
     expect(events.at(-2)).toMatchObject({
       type: "tool_calls",
       toolCalls: [
@@ -106,5 +110,76 @@ describe("createOpenAiCompatibleClient", () => {
       type: "finished",
       finishReason: "tool_calls",
     });
+  });
+
+  it("yields tool_call_args once path is visible in partial write_file arguments", async () => {
+    const fetchMock = vi.fn(async () => {
+      const body = [
+        'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","type":"function","function":{"name":"write_file","arguments":""}}]}}]}\n\n',
+        'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\\"path\\":\\"src/App.tsx\\","}}]}}]}\n\n',
+        'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\\"content\\":\\"hello world that is long\\"}"}}]},"finish_reason":"tool_calls"}]}\n\n',
+        "data: [DONE]\n\n",
+      ].join("");
+      return new Response(body, { status: 200 });
+    });
+    const client = createOpenAiCompatibleClient({
+      apiKey: "k",
+      baseUrl: "https://example.com/v1",
+      timeoutMs: 5000,
+      fetch: fetchMock as unknown as typeof fetch,
+    });
+    const events = [];
+    for await (const ev of client.complete({
+      model: "m",
+      messages: [{ role: "user", content: "x" }],
+    })) {
+      events.push(ev);
+    }
+    expect(events.map((e) => e.type)).toEqual([
+      "tool_calls_begin",
+      "tool_call_args",
+      "tool_calls",
+      "finished",
+    ]);
+    expect(events[1]).toMatchObject({
+      type: "tool_call_args",
+      id: "c1",
+      name: "write_file",
+    });
+    expect(
+      (events[1] as { arguments: string }).arguments,
+    ).toContain('"path":"src/App.tsx"');
+  });
+
+  it("yields tool_calls_begin before aggregated tool_calls when content preceded tools", async () => {
+    const fetchMock = vi.fn(async () => {
+      const body = [
+        'data: {"choices":[{"delta":{"content":"我先读"}}]}\n\n',
+        'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","type":"function","function":{"name":"read_file","arguments":""}}]}}]}\n\n',
+        'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\\"path\\":\\"index.html\\"}"}}]},"finish_reason":"tool_calls"}]}\n\n',
+        "data: [DONE]\n\n",
+      ].join("");
+      return new Response(body, { status: 200 });
+    });
+    const client = createOpenAiCompatibleClient({
+      apiKey: "k",
+      baseUrl: "https://example.com/v1",
+      timeoutMs: 5000,
+      fetch: fetchMock as unknown as typeof fetch,
+    });
+    const events = [];
+    for await (const ev of client.complete({
+      model: "m",
+      messages: [{ role: "user", content: "x" }],
+    })) {
+      events.push(ev);
+    }
+    expect(events.map((e) => e.type)).toEqual([
+      "content_delta",
+      "tool_calls_begin",
+      "tool_call_args",
+      "tool_calls",
+      "finished",
+    ]);
   });
 });

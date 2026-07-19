@@ -56,6 +56,12 @@ function forwardTurnEvent(
     case "token":
       send("token", { text: ev.text });
       break;
+    case "token_clear":
+      send("token_clear", {});
+      break;
+    case "thinking_clear":
+      send("thinking_clear", {});
+      break;
     case "task":
       send("task", {
         taskId: ev.taskId,

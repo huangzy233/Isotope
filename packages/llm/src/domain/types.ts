@@ -30,6 +30,16 @@ export type LlmMessage =
 
 export type LlmStreamEvent =
   | { type: "content_delta"; text: string }
+  | {
+      type: "tool_calls_begin";
+      toolCalls: Array<{ id: string; name: string }>;
+    }
+  | {
+      type: "tool_call_args";
+      id: string;
+      name: string;
+      arguments: string;
+    }
   | { type: "tool_calls"; toolCalls: LlmToolCall[] }
   | { type: "finished"; finishReason: string | null };
 

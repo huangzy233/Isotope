@@ -48,7 +48,10 @@ export type RunTurnInput<TPort = WorkspaceToolPort> = {
   toolResultMaxChars?: number;
   signal?: AbortSignal;
   onToken: (text: string) => void;
+  onTokenClear?: () => void;
   onThinking?: (text: string) => void;
+  /** Drop trailing thinking steps promoted to final `content` (no-tool round). */
+  onThinkingClear?: () => void;
   onTool?: (ev: ToolEvent) => void;
   onStatus?: (phase: TurnPhase) => void;
 };

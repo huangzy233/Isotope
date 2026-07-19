@@ -52,6 +52,8 @@ export type TeamTurnEvent =
       ok?: boolean;
     }
   | { type: "token"; text: string }
+  | { type: "token_clear" }
+  | { type: "thinking_clear" }
   | {
       type: "task";
       taskId: string;
@@ -174,13 +176,41 @@ function trackProcess(
 ) {
   return {
     onToken: (text: string) => publish({ type: "token", text }),
+    onTokenClear: () => publish({ type: "token_clear" }),
+    onThinkingClear: () => {
+      while (process.steps.at(-1)?.type === "thinking") {
+        process.steps.pop();
+      }
+      checkpoint();
+      publish({ type: "thinking_clear" });
+    },
     onThinking: (text: string) => {
       const last = process.steps.at(-1);
       if (last?.type === "thinking") {
         last.text += text;
       } else {
-        process.steps.push({ type: "thinking", text });
-        checkpoint();
+        let i = process.steps.length - 1;
+        while (i >= 0 && process.steps[i]?.type === "tool") {
+          const tool = process.steps[i] as { type: "tool"; status: string };
+          if (tool.status !== "running") {
+            process.steps.push({ type: "thinking", text });
+            checkpoint();
+            publish({ type: "thinking", text });
+            return;
+          }
+          i -= 1;
+        }
+        if (i >= 0 && process.steps[i]?.type === "thinking") {
+          process.steps[i] = {
+            type: "thinking",
+            text:
+              (process.steps[i] as { type: "thinking"; text: string }).text +
+              text,
+          };
+        } else {
+          process.steps.splice(i + 1, 0, { type: "thinking", text });
+          checkpoint();
+        }
       }
       publish({ type: "thinking", text });
     },
@@ -192,13 +222,27 @@ function trackProcess(
       ok?: boolean;
     }) => {
       if (ev.state === "start") {
-        process.steps.push({
-          type: "tool",
-          id: ev.id,
-          name: ev.name,
-          status: "running",
-          summary: ev.summary,
-        });
+        const idx = process.steps.findIndex(
+          (s) => s.type === "tool" && s.id === ev.id,
+        );
+        if (idx >= 0 && process.steps[idx]?.type === "tool") {
+          const prev = process.steps[idx];
+          process.steps[idx] = {
+            type: "tool",
+            id: prev.id,
+            name: ev.name || prev.name,
+            status: "running",
+            summary: ev.summary ?? prev.summary,
+          };
+        } else {
+          process.steps.push({
+            type: "tool",
+            id: ev.id,
+            name: ev.name,
+            status: "running",
+            summary: ev.summary,
+          });
+        }
       } else {
         const idx = process.steps.findIndex(
           (s) => s.type === "tool" && s.id === ev.id,

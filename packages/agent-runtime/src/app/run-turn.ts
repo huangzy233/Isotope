@@ -6,7 +6,7 @@ import type {
   TurnProcess,
   TurnProcessStep,
 } from "../domain/types.js";
-import { toolSummary } from "./tool-summary.js";
+import { peekToolSummary, toolSummary } from "./tool-summary.js";
 
 const ROUND_LIMIT_NOTE = "（已达工具轮次上限）";
 const TOOL_RESULT_MAX_CHARS = 8000;
@@ -17,13 +17,41 @@ function clipToolContent(content: string, max: number): string {
   return content.slice(0, max) + TOOL_RESULT_TRUNCATED_SUFFIX;
 }
 
-function appendThinking(process: TurnProcess, text: string): void {
+function appendThinking(
+  process: TurnProcess,
+  text: string,
+  opts?: { beforeTrailingTools?: boolean },
+): void {
   const last = process.steps[process.steps.length - 1];
   if (last?.type === "thinking") {
     last.text += text;
     return;
   }
+  if (opts?.beforeTrailingTools) {
+    // Tools may appear early (tool_calls_begin); keep later deltas on the
+    // thinking step that precedes this round's trailing tools.
+    let i = process.steps.length - 1;
+    while (i >= 0 && process.steps[i]?.type === "tool") i -= 1;
+    if (i >= 0 && process.steps[i]?.type === "thinking") {
+      process.steps[i] = {
+        type: "thinking",
+        text:
+          (process.steps[i] as { type: "thinking"; text: string }).text + text,
+      };
+      return;
+    }
+    process.steps.splice(i + 1, 0, { type: "thinking", text });
+    return;
+  }
   process.steps.push({ type: "thinking", text });
+}
+
+function revokeTrailingThinking(process: TurnProcess): void {
+  while (process.steps.length > 0) {
+    const last = process.steps[process.steps.length - 1];
+    if (last?.type !== "thinking") break;
+    process.steps.pop();
+  }
 }
 
 function hasThinking(steps: TurnProcessStep[]): boolean {
@@ -43,7 +71,9 @@ export async function runTurn<TPort = WorkspaceToolPort>(
     toolResultMaxChars = TOOL_RESULT_MAX_CHARS,
     signal,
     onToken,
+    onTokenClear,
     onThinking,
+    onThinkingClear,
     onTool,
     onStatus,
   } = input;
@@ -69,7 +99,51 @@ export async function runTurn<TPort = WorkspaceToolPort>(
 
   for (let round = 0; round < maxToolRounds; round++) {
     let hadToolCalls = false;
-    const roundChunks: string[] = [];
+    let isToolRound = false;
+    let roundBuffer = "";
+    let speculativeTokens = "";
+    let startedStreaming = false;
+    const startedToolIds = new Set<string>();
+
+    const markToolRound = () => {
+      if (isToolRound) return;
+      isToolRound = true;
+      if (speculativeTokens.length > 0) {
+        onTokenClear?.();
+        speculativeTokens = "";
+      }
+      onStatus?.("running");
+    };
+
+    const ensureToolStarted = (
+      id: string,
+      name: string,
+      summary?: string,
+    ) => {
+      if (startedToolIds.has(id)) {
+        const existing = process.steps.find(
+          (s) => s.type === "tool" && s.id === id,
+        );
+        if (
+          existing?.type === "tool" &&
+          summary &&
+          existing.summary !== summary
+        ) {
+          existing.summary = summary;
+          onTool?.({ id, name, state: "start", summary });
+        }
+        return;
+      }
+      startedToolIds.add(id);
+      onTool?.({ id, name, state: "start", summary });
+      process.steps.push({
+        type: "tool",
+        id,
+        name,
+        status: "running",
+        summary,
+      });
+    };
 
     for await (const ev of llm.complete({
       model,
@@ -78,19 +152,46 @@ export async function runTurn<TPort = WorkspaceToolPort>(
       signal,
     })) {
       if (ev.type === "content_delta") {
-        roundChunks.push(ev.text);
+        roundBuffer += ev.text;
+        // Always stream into process first so tools never appear above thinking.
+        onThinking?.(ev.text);
+        appendThinking(process, ev.text, {
+          beforeTrailingTools: isToolRound,
+        });
+        if (!isToolRound) {
+          if (!startedStreaming) {
+            startedStreaming = true;
+            onStatus?.("streaming");
+          }
+          onToken(ev.text);
+          speculativeTokens += ev.text;
+        }
+        continue;
+      }
+
+      if (ev.type === "tool_calls_begin") {
+        markToolRound();
+        for (const t of ev.toolCalls) {
+          if (!t.id || !t.name) continue;
+          ensureToolStarted(t.id, t.name);
+        }
+        continue;
+      }
+
+      if (ev.type === "tool_call_args") {
+        markToolRound();
+        const summary =
+          peekToolSummary(ev.name, ev.arguments) ??
+          toolSummary(ev.name, ev.arguments);
+        ensureToolStarted(ev.id, ev.name, summary);
         continue;
       }
 
       if (ev.type === "tool_calls") {
         hadToolCalls = true;
-        const thinkingText = roundChunks.join("");
-        roundChunks.length = 0;
-        if (thinkingText.length > 0) {
-          onThinking?.(thinkingText);
-          appendThinking(process, thinkingText);
-        }
-        onStatus?.("running");
+        markToolRound();
+        const thinkingText = roundBuffer;
+        roundBuffer = "";
 
         messages.push({
           role: "assistant",
@@ -103,19 +204,7 @@ export async function runTurn<TPort = WorkspaceToolPort>(
             call.function.name,
             call.function.arguments,
           );
-          onTool?.({
-            id: call.id,
-            name: call.function.name,
-            state: "start",
-            summary,
-          });
-          process.steps.push({
-            type: "tool",
-            id: call.id,
-            name: call.function.name,
-            status: "running",
-            summary,
-          });
+          ensureToolStarted(call.id, call.function.name, summary);
 
           const outcome = await Promise.resolve(
             agent.executeTool(
@@ -125,9 +214,12 @@ export async function runTurn<TPort = WorkspaceToolPort>(
             ),
           );
 
-          const toolStep = process.steps[process.steps.length - 1];
-          if (toolStep?.type === "tool" && toolStep.id === call.id) {
+          const toolStep = process.steps.find(
+            (s) => s.type === "tool" && s.id === call.id,
+          );
+          if (toolStep?.type === "tool") {
             toolStep.status = outcome.ok ? "done" : "error";
+            if (summary) toolStep.summary = summary;
           }
 
           onTool?.({
@@ -169,11 +261,10 @@ export async function runTurn<TPort = WorkspaceToolPort>(
     }
 
     if (!hadToolCalls) {
-      onStatus?.("streaming");
-      for (const chunk of roundChunks) {
-        onToken(chunk);
-        assistantText += chunk;
-      }
+      // Final answer lived briefly in process as thinking; promote to content only.
+      revokeTrailingThinking(process);
+      onThinkingClear?.();
+      assistantText += speculativeTokens;
       return { assistantText, filesChanged, writtenPaths, process };
     }
   }
