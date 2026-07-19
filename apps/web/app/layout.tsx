@@ -11,6 +11,14 @@ const sans = Plus_Jakarta_Sans({
 export const metadata: Metadata = {
   title: "Isotope",
   description: "Isotope",
+  icons: {
+    icon: [
+      { url: "/favicon.svg", type: "image/svg+xml" },
+      { url: "/favicon-32.png", sizes: "32x32", type: "image/png" },
+      { url: "/favicon.ico", sizes: "any" },
+    ],
+    apple: [{ url: "/icon.png", sizes: "256x256", type: "image/png" }],
+  },
 };
 
 export default function RootLayout({

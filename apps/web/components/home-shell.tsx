@@ -75,6 +75,7 @@ export function HomeShell() {
             placeholder="例如：做一个待办清单，支持分组与截止时间…"
             submitLabel="开始"
             submittingLabel="创建中…"
+            submitIcon="start"
             submitting={submitting}
             chips={
               <ComposerModeChips

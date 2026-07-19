@@ -20,7 +20,14 @@ import { StatusBadge } from "@/components/status-badge";
 import { TaskCard } from "@/components/task-card";
 import { VersionCard } from "@/components/version-card";
 import { VersionHistoryDialog } from "@/components/version-history-dialog";
-import { CheckCircle2, ChevronUp, Maximize2, Minimize2 } from "lucide-react";
+import {
+  CheckCircle2,
+  ChevronUp,
+  History,
+  Maximize2,
+  Minimize2,
+  RefreshCw,
+} from "lucide-react";
 import { ToolCallGroup } from "@/components/tool-call-row";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -1101,10 +1108,13 @@ export function WorkbenchShell({
                 <Button
                   type="button"
                   variant="outline"
-                  size="sm"
+                  size="icon"
+                  className="h-8 w-8"
                   onClick={() => setVersionsOpen(true)}
+                  aria-label="版本"
+                  title="版本"
                 >
-                  版本
+                  <History className="h-4 w-4" aria-hidden />
                 </Button>
                 <StatusBadge status={agentStatus} />
               </>
@@ -1259,10 +1269,13 @@ export function WorkbenchShell({
                     <Button
                       type="button"
                       variant="outline"
-                      size="sm"
+                      size="icon"
+                      className="h-8 w-8"
                       onClick={() => void handleRebuild()}
+                      aria-label="刷新"
+                      title="刷新"
                     >
-                      刷新
+                      <RefreshCw className="h-4 w-4" aria-hidden />
                     </Button>
                   ) : null}
                 </>
@@ -1270,17 +1283,18 @@ export function WorkbenchShell({
               <Button
                 type="button"
                 variant="outline"
-                size="sm"
+                size="icon"
+                className="h-8 w-8"
                 aria-pressed={immersive}
                 aria-label={immersive ? "退出沉浸" : "沉浸"}
+                title={immersive ? "退出沉浸" : "沉浸"}
                 onClick={() => setImmersive((v) => !v)}
               >
                 {immersive ? (
-                  <Minimize2 className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+                  <Minimize2 className="h-4 w-4" aria-hidden />
                 ) : (
-                  <Maximize2 className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+                  <Maximize2 className="h-4 w-4" aria-hidden />
                 )}
-                {immersive ? "退出沉浸" : "沉浸"}
               </Button>
             </div>
           </div>

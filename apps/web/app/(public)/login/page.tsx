@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { Eye, Layers, MessageSquare } from "lucide-react";
+import { BrandMark } from "@/components/brand-mark";
 import { LoginForm } from "@/components/login-form";
 import {
   Card,
@@ -38,9 +39,12 @@ export default async function LoginPage() {
       <section className="hidden w-1/2 flex-col justify-center bg-primary/5 px-10 py-12 md:flex lg:px-16">
         <div className="mx-auto w-full max-w-md space-y-8">
           <div className="space-y-3">
-            <p className="text-sm font-semibold tracking-tight text-primary">
-              Isotope
-            </p>
+            <div className="flex items-center gap-2.5">
+              <BrandMark className="h-8 w-8" />
+              <p className="text-sm font-semibold tracking-tight text-primary">
+                Isotope
+              </p>
+            </div>
             <h1 className="text-2xl font-semibold tracking-tight text-foreground">
               智能应用生成平台
             </h1>
@@ -69,10 +73,13 @@ export default async function LoginPage() {
       <section className="flex w-full items-center justify-center bg-background px-4 py-12 md:w-1/2">
         <div className="w-full max-w-md">
           <Card>
-            <CardHeader className="space-y-1 text-center">
-              <h2 className="text-xl font-semibold tracking-tight text-foreground">
-                Isotope
-              </h2>
+            <CardHeader className="space-y-3 text-center">
+              <div className="flex flex-col items-center gap-2">
+                <BrandMark className="h-10 w-10" />
+                <h2 className="text-xl font-semibold tracking-tight text-foreground">
+                  Isotope
+                </h2>
+              </div>
               <CardDescription>使用演示账号登录以继续</CardDescription>
             </CardHeader>
             <CardContent>
