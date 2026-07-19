@@ -2,17 +2,44 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { createRequirementAgent } from "@isotope/agents";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createCoderAgent, createRequirementAgent } from "@isotope/agents";
 import type { LlmClient, LlmStreamEvent } from "@isotope/llm";
+import type { PreferenceStore } from "@isotope/memory";
+import type { PreviewService, PreviewStatusSnapshot } from "@isotope/preview";
 import { createFsSqliteWorkspace } from "@isotope/workspace";
 import { createProject } from "./create-project.js";
 import { ASSISTANT_PLACEHOLDER } from "./placeholder.js";
+import { PRODUCT_SPEC_PATH } from "./project-memory-paths.js";
+import { beginEngineerTurn } from "./stream-engineer-turn.js";
 import {
   beginPlanTurn,
   type PlanTurnEvent,
 } from "./stream-plan-turn.js";
 import { subscribeTurn } from "./turn-hub.js";
+
+const fakePreferences: PreferenceStore = {
+  getPreferences: () => ({}),
+  upsertPreference: () => {},
+};
+
+function readySnapshot(): PreviewStatusSnapshot {
+  return {
+    status: "ready",
+    revision: "rev-1",
+    error: null,
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  };
+}
+
+function mockPreview(): PreviewService {
+  return {
+    getStatus: vi.fn(() => readySnapshot()),
+    ensureBuild: vi.fn(() => readySnapshot()),
+    enqueueBuild: vi.fn(() => readySnapshot()),
+    readAsset: vi.fn(() => null),
+  };
+}
 
 const templatePath = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -87,6 +114,7 @@ describe("beginPlanTurn", () => {
       },
       {
         workspace,
+        preferences: fakePreferences,
         llm: llmFromScript([
           [
             { type: "content_delta", text: "先确认一下目标用户？" },
@@ -148,6 +176,7 @@ describe("beginPlanTurn", () => {
       },
       {
         workspace,
+        preferences: fakePreferences,
         llm: llmFromScript([
           [
             {
@@ -185,6 +214,9 @@ describe("beginPlanTurn", () => {
     expect(again.planEnabled).toBe(false);
     expect(again.planConfirmed).toBe(true);
     expect(again.confirmedRequirement).toBe(summary.trim());
+    expect(workspace.readFile(project.id, PRODUCT_SPEC_PATH)).toContain(
+      summary.trim(),
+    );
 
     const last = workspace.listMessages(project.id).at(-1);
     expect(last?.content).toBe("已确认需求，接下来交给实现。");
@@ -201,6 +233,52 @@ describe("beginPlanTurn", () => {
           e.messageId === last?.id,
       ),
     ).toBe(true);
+
+    let capturedMessages:
+      | Array<{ role: string; content?: string | null }>
+      | undefined;
+    const handoffBase = llmFromScript([
+      [
+        { type: "content_delta", text: "按规格开工" },
+        { type: "finished", finishReason: "stop" },
+      ],
+    ]);
+    const handoffLlm: LlmClient = {
+      async *complete(input) {
+        capturedMessages = input.messages.map((m) => ({
+          role: m.role,
+          content: "content" in m ? m.content : undefined,
+        }));
+        yield* handoffBase.complete(input);
+      },
+    };
+    const handoff = beginEngineerTurn(
+      {
+        ownerUserId: "demo",
+        projectId: project.id,
+        action: "send",
+        silentHandoff: true,
+      },
+      {
+        workspace,
+        preferences: fakePreferences,
+        preview: mockPreview(),
+        llm: handoffLlm,
+        agent: createCoderAgent({ systemPrompt: "test" }),
+        model: "test-model",
+        maxToolRounds: 8,
+      },
+    );
+    expect(handoff.ok).toBe(true);
+    if (!handoff.ok) return;
+    await handoff.run();
+
+    const joined = (capturedMessages ?? [])
+      .map((m) => (typeof m.content === "string" ? m.content : ""))
+      .join("\n");
+    expect(joined).toContain("【记忆】");
+    expect(joined).toContain(summary.trim());
+    expect(joined).not.toContain("【已确认需求】");
   });
 
   it("send + confirm_requirement with teamEnabled reports nextTurn team", async () => {
@@ -227,6 +305,7 @@ describe("beginPlanTurn", () => {
       },
       {
         workspace,
+        preferences: fakePreferences,
         llm: llmFromScript([
           [
             {
@@ -265,6 +344,9 @@ describe("beginPlanTurn", () => {
     expect(again.planConfirmed).toBe(true);
     expect(again.confirmedRequirement).toBe(summary.trim());
     expect(again.teamEnabled).toBe(true);
+    expect(workspace.readFile(project.id, PRODUCT_SPEC_PATH)).toContain(
+      summary.trim(),
+    );
 
     const last = workspace.listMessages(project.id).at(-1);
     expect(last?.content).toBe("已确认需求，接下来交给团队。");
@@ -306,6 +388,7 @@ describe("beginPlanTurn", () => {
       },
       {
         workspace,
+        preferences: fakePreferences,
         llm: llmFromScript([
           [
             { type: "content_delta", text: "明白，还有其他约束吗？" },

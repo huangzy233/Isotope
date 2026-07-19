@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createCoderAgent } from "@isotope/agents";
 import type { LlmClient, LlmStreamEvent } from "@isotope/llm";
+import type { PreferenceStore } from "@isotope/memory";
 import type { PreviewService, PreviewStatusSnapshot } from "@isotope/preview";
 import { createFsSqliteWorkspace } from "@isotope/workspace";
 import { createProject } from "./create-project.js";
@@ -14,6 +15,11 @@ import {
   type EngineerTurnEvent,
 } from "./stream-engineer-turn.js";
 import { subscribeTurn } from "./turn-hub.js";
+
+const fakePreferences: PreferenceStore = {
+  getPreferences: () => ({}),
+  upsertPreference: () => {},
+};
 
 const templatePath = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -118,6 +124,7 @@ describe("beginEngineerTurn", () => {
       },
       {
         workspace,
+        preferences: fakePreferences,
         preview,
         llm: llmFromScript([
           [
@@ -238,6 +245,7 @@ describe("beginEngineerTurn", () => {
       },
       {
         workspace,
+        preferences: fakePreferences,
         preview: mockPreview(),
         llm,
         agent: createCoderAgent({ systemPrompt: "test" }),
@@ -282,6 +290,7 @@ describe("beginEngineerTurn", () => {
       },
       {
         workspace,
+        preferences: fakePreferences,
         preview,
         llm: llmFromScript([
           [
@@ -332,6 +341,7 @@ describe("beginEngineerTurn", () => {
       },
       {
         workspace,
+        preferences: fakePreferences,
         preview: mockPreview(),
         llm: llmFromScript([
           [
@@ -371,6 +381,7 @@ describe("beginEngineerTurn", () => {
     const preview = mockPreview();
     const deps = {
       workspace,
+      preferences: fakePreferences,
       preview,
       llm: llmWithDelay(
         [
@@ -431,6 +442,7 @@ describe("beginEngineerTurn", () => {
       },
       {
         workspace,
+        preferences: fakePreferences,
         preview,
         llm: {
           async *complete(_input) {
@@ -475,6 +487,7 @@ describe("beginEngineerTurn", () => {
       },
       {
         workspace,
+        preferences: fakePreferences,
         preview: mockPreview(),
         llm: {
           async *complete(_input) {
@@ -514,6 +527,7 @@ describe("beginEngineerTurn", () => {
       },
       {
         workspace,
+        preferences: fakePreferences,
         preview: mockPreview(),
         llm: llmWithDelay(
           [
@@ -566,6 +580,7 @@ describe("beginEngineerTurn", () => {
       },
       {
         workspace,
+        preferences: fakePreferences,
         preview: mockPreview(),
         llm: {
           async *complete(_input) {
@@ -635,6 +650,7 @@ describe("beginEngineerTurn", () => {
       },
       {
         workspace,
+        preferences: fakePreferences,
         preview,
         llm: llmFromScript([
           [
@@ -739,6 +755,7 @@ describe("beginEngineerTurn", () => {
       },
       {
         workspace,
+        preferences: fakePreferences,
         preview: mockPreview(),
         llm,
         agent: createCoderAgent({ systemPrompt: "test" }),
@@ -761,8 +778,9 @@ describe("beginEngineerTurn", () => {
     const joined = (capturedMessages ?? [])
       .map((m) => (typeof m.content === "string" ? m.content : ""))
       .join("\n");
-    expect(joined).toContain("【已确认需求】");
+    expect(joined).toContain("【记忆】");
     expect(joined).toContain("做一款待办应用，支持增删改");
+    expect(joined).not.toContain("【已确认需求】");
   });
 
   it("silentHandoff without confirmed requirement is bad_request", () => {
@@ -787,6 +805,7 @@ describe("beginEngineerTurn", () => {
       },
       {
         workspace,
+        preferences: fakePreferences,
         preview: mockPreview(),
         llm: llmFromScript([]),
         agent: createCoderAgent({ systemPrompt: "test" }),
@@ -827,6 +846,7 @@ describe("beginEngineerTurn", () => {
       },
       {
         workspace,
+        preferences: fakePreferences,
         preview: mockPreview(),
         llm: {
           async *complete(_input) {

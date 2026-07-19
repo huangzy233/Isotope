@@ -1,6 +1,7 @@
 import { runTurn } from "@isotope/agent-runtime";
 import type { CoderAgent, LeaderAgent, TaskToolPort } from "@isotope/agents";
 import type { LlmClient } from "@isotope/llm";
+import type { PreferenceStore } from "@isotope/memory";
 import type { PreviewService } from "@isotope/preview";
 import type {
   MessageProcess,
@@ -8,6 +9,7 @@ import type {
   TaskStatus,
   WorkspaceStore,
 } from "@isotope/workspace";
+import { buildTurnContext } from "./build-turn-context.js";
 import { checkpointProcess } from "./checkpoint-process.js";
 import { enqueuePreviewBuild } from "./enqueue-preview-build.js";
 import { getProject } from "./get-project.js";
@@ -57,6 +59,7 @@ export type TeamTurnEvent =
 
 export type TeamTurnDeps = {
   workspace: WorkspaceStore;
+  preferences: PreferenceStore;
   preview: PreviewService;
   llm: LlmClient;
   leader: LeaderAgent;
@@ -90,24 +93,24 @@ export type BeginTeamTurnResult =
     };
 
 function historyForProject(
-  workspace: WorkspaceStore,
+  deps: TeamTurnDeps,
   projectId: string,
+  ownerUserId: string,
 ): Array<{ role: "user" | "assistant"; content: string }> {
-  const history = workspace
-    .listMessages(projectId)
-    .filter((m) => m.role === "user" || m.role === "assistant")
-    .filter((m) => m.content !== ASSISTANT_PLACEHOLDER)
-    .map((m) => ({
-      role: m.role as "user" | "assistant",
-      content: m.content,
-    }));
-  const project = workspace.getProject(projectId);
-  if (project?.confirmedRequirement) {
-    history.unshift({
-      role: "user",
-      content: `【已确认需求】\n${project.confirmedRequirement}`,
-    });
-  }
+  const project = deps.workspace.getProject(projectId);
+  if (!project) return [];
+  const { history } = buildTurnContext({
+    messages: deps.workspace.listMessages(projectId),
+    project,
+    preferences: deps.preferences.getPreferences(ownerUserId),
+    readProjectFile: (p) => {
+      try {
+        return deps.workspace.readFile(projectId, p);
+      } catch {
+        return null;
+      }
+    },
+  });
   return history;
 }
 
@@ -253,7 +256,7 @@ async function runAlexForTask(input: {
     checkpoint,
   );
 
-  const history = historyForProject(deps.workspace, projectId);
+  const history = historyForProject(deps, projectId, ownerUserId);
   if (extraUserContent) {
     history.push({ role: "user", content: extraUserContent });
   }
@@ -338,10 +341,11 @@ async function runAlexForTask(input: {
 /** 项目内无进行中任务时，追加一条 Mike 收尾总结（旁路、无工具）。 */
 async function maybeRunMikeSummary(input: {
   projectId: string;
+  ownerUserId: string;
   deps: TeamTurnDeps;
   publish?: (event: TeamTurnEvent) => void;
 }): Promise<string | null> {
-  const { projectId, deps, publish } = input;
+  const { projectId, ownerUserId, deps, publish } = input;
   if (hasOpenTasks(deps.workspace, projectId)) {
     return null;
   }
@@ -380,7 +384,7 @@ async function maybeRunMikeSummary(input: {
       model: deps.leaderSummaryModel,
       agent: deps.leaderSummary,
       port: summaryPort,
-      history: historyForProject(deps.workspace, projectId),
+      history: historyForProject(deps, projectId, ownerUserId),
       maxToolRounds: Math.min(2, deps.maxToolRounds),
       ...callbacks,
     });
@@ -514,7 +518,11 @@ export function beginTeamTurn(
           model: deps.leaderModel,
           agent: deps.leader,
           port: taskPort,
-          history: historyForProject(deps.workspace, input.projectId),
+          history: historyForProject(
+            deps,
+            input.projectId,
+            input.ownerUserId,
+          ),
           maxToolRounds: deps.maxToolRounds,
           ...mikeCallbacks,
         });
@@ -549,6 +557,7 @@ export function beginTeamTurn(
 
         const summaryMessageId = await maybeRunMikeSummary({
           projectId: input.projectId,
+          ownerUserId: input.ownerUserId,
           deps,
           publish,
         });
@@ -626,6 +635,7 @@ export async function retryStuckAssignedTask(
     });
     await maybeRunMikeSummary({
       projectId: task.projectId,
+      ownerUserId: project.ownerUserId,
       deps,
     });
     return { ok: true };

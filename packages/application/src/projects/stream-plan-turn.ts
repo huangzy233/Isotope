@@ -1,7 +1,9 @@
 import { runTurn } from "@isotope/agent-runtime";
 import type { ConfirmRequirementPort, RequirementAgent } from "@isotope/agents";
 import type { LlmClient } from "@isotope/llm";
+import type { PreferenceStore } from "@isotope/memory";
 import type { MessageProcess, WorkspaceStore } from "@isotope/workspace";
+import { buildTurnContext } from "./build-turn-context.js";
 import { checkpointProcess } from "./checkpoint-process.js";
 import { getProject } from "./get-project.js";
 import { ASSISTANT_PLACEHOLDER } from "./placeholder.js";
@@ -12,6 +14,7 @@ import {
   publishTurnEvent,
 } from "./turn-hub.js";
 import { releaseTurnLock, tryAcquireTurnLock } from "./turn-lock.js";
+import { writeProductSpec } from "./write-product-spec.js";
 
 export type PlanTurnEvent =
   | { type: "status"; phase: "thinking" | "running" | "streaming" }
@@ -50,6 +53,7 @@ export type PlanTurnInput =
 
 export type PlanTurnDeps = {
   workspace: WorkspaceStore;
+  preferences: PreferenceStore;
   llm: LlmClient;
   agent: RequirementAgent;
   model: string;
@@ -68,12 +72,11 @@ export function beginPlanTurn(
   input: PlanTurnInput,
   deps: PlanTurnDeps,
 ): BeginPlanTurnResult {
-  if (
-    !getProject(
-      { ownerUserId: input.ownerUserId, projectId: input.projectId },
-      deps.workspace,
-    )
-  ) {
+  const owned = getProject(
+    { ownerUserId: input.ownerUserId, projectId: input.projectId },
+    deps.workspace,
+  );
+  if (!owned) {
     return { ok: false, status: "not_found" };
   }
 
@@ -134,14 +137,18 @@ export function beginPlanTurn(
       let nextTurnForDone: "engineer" | "team" | undefined;
 
       try {
-        const history = deps.workspace
-          .listMessages(input.projectId)
-          .filter((m) => m.role === "user" || m.role === "assistant")
-          .filter((m) => m.content !== ASSISTANT_PLACEHOLDER)
-          .map((m) => ({
-            role: m.role as "user" | "assistant",
-            content: m.content,
-          }));
+        const { history } = buildTurnContext({
+          messages: deps.workspace.listMessages(input.projectId),
+          project: deps.workspace.getProject(input.projectId) ?? owned,
+          preferences: deps.preferences.getPreferences(input.ownerUserId),
+          readProjectFile: (p) => {
+            try {
+              return deps.workspace.readFile(input.projectId, p);
+            } catch {
+              return null;
+            }
+          },
+        });
 
         const confirmPort: ConfirmRequirementPort = {
           confirmRequirement(summary: string) {
@@ -155,6 +162,7 @@ export function beginPlanTurn(
               confirmedRequirement: s,
               planEnabled: false,
             });
+            writeProductSpec(deps.workspace, input.projectId, s);
             confirmedThisTurn = true;
             nextTurnForDone = nextTurn;
             return { ok: true };

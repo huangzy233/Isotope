@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createCoderAgent, createLeaderAgent } from "@isotope/agents";
 import type { LlmClient, LlmStreamEvent } from "@isotope/llm";
+import type { PreferenceStore } from "@isotope/memory";
 import type { PreviewService, PreviewStatusSnapshot } from "@isotope/preview";
 import { createFsSqliteWorkspace } from "@isotope/workspace";
 import { createProject } from "./create-project.js";
@@ -17,6 +18,11 @@ import {
 } from "./stream-team-turn.js";
 import { isTurnHubActive, subscribeTurn } from "./turn-hub.js";
 import { releaseTurnLock, tryAcquireTurnLock } from "./turn-lock.js";
+
+const fakePreferences: PreferenceStore = {
+  getPreferences: () => ({}),
+  upsertPreference: () => {},
+};
 
 const templatePath = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -83,6 +89,7 @@ function teamDeps(
 ) {
   return {
     workspace,
+    preferences: fakePreferences,
     preview,
     llm,
     leader: createLeaderAgent({ systemPrompt: "mike-test" }),

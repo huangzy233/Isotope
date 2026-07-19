@@ -22,6 +22,12 @@ import { getPreview } from "@/lib/preview";
 import { ensureTaskRuntime, getTaskBus } from "@/lib/task-runtime";
 import { getWorkspace } from "@/lib/workspace";
 
+/** Task 4 stub; Task 7 replaces with getPreferenceStore singleton. */
+const preferencesStub = {
+  getPreferences: () => ({}),
+  upsertPreference: () => {},
+};
+
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
@@ -250,6 +256,7 @@ export async function POST(request: Request, context: RouteContext) {
     }
     begun = beginPlanTurn(turnInput, {
       workspace,
+      preferences: preferencesStub,
       ...planDeps,
     });
   } else if (kind === "team") {
@@ -265,6 +272,7 @@ export async function POST(request: Request, context: RouteContext) {
     }
     begun = beginTeamTurn(turnInput, {
       workspace,
+      preferences: preferencesStub,
       preview: getPreview(),
       bus: getTaskBus(),
       ...teamDeps,
@@ -282,6 +290,7 @@ export async function POST(request: Request, context: RouteContext) {
     }
     begun = beginEngineerTurn(turnInput, {
       workspace,
+      preferences: preferencesStub,
       preview: getPreview(),
       ...turnDeps,
     });

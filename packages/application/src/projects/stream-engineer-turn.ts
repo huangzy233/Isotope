@@ -1,8 +1,10 @@
 import { runTurn } from "@isotope/agent-runtime";
 import type { CoderAgent } from "@isotope/agents";
 import type { LlmClient } from "@isotope/llm";
+import type { PreferenceStore } from "@isotope/memory";
 import type { PreviewService } from "@isotope/preview";
 import type { MessageProcess, WorkspaceStore } from "@isotope/workspace";
+import { buildTurnContext } from "./build-turn-context.js";
 import { checkpointProcess } from "./checkpoint-process.js";
 import { enqueuePreviewBuild } from "./enqueue-preview-build.js";
 import { getProject } from "./get-project.js";
@@ -62,6 +64,7 @@ export type EngineerTurnInput =
 
 export type EngineerTurnDeps = {
   workspace: WorkspaceStore;
+  preferences: PreferenceStore;
   preview: PreviewService;
   llm: LlmClient;
   agent: CoderAgent;
@@ -150,20 +153,18 @@ export function beginEngineerTurn(
         const project =
           deps.workspace.getProject(input.projectId) ?? owned;
 
-        const history = deps.workspace
-          .listMessages(input.projectId)
-          .filter((m) => m.role === "user" || m.role === "assistant")
-          .filter((m) => m.content !== ASSISTANT_PLACEHOLDER)
-          .map((m) => ({
-            role: m.role as "user" | "assistant",
-            content: m.content,
-          }));
-        if (project.confirmedRequirement) {
-          history.unshift({
-            role: "user",
-            content: `【已确认需求】\n${project.confirmedRequirement}`,
-          });
-        }
+        const { history } = buildTurnContext({
+          messages: deps.workspace.listMessages(input.projectId),
+          project,
+          preferences: deps.preferences.getPreferences(input.ownerUserId),
+          readProjectFile: (p) => {
+            try {
+              return deps.workspace.readFile(input.projectId, p);
+            } catch {
+              return null;
+            }
+          },
+        });
 
         const basePort = {
           listFiles: (dir?: string) =>
