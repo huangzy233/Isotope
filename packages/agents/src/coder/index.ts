@@ -22,11 +22,14 @@ export type CoderAgent = {
 
 export function createCoderAgent(input: {
   systemPrompt: string;
+  tools?: LlmToolDefinition[];
 }): CoderAgent {
   return {
     displayName: CODER_DISPLAY_NAME,
     systemPrompt: input.systemPrompt,
-    tools: CODER_TOOLS,
+    tools: input.tools ?? CODER_TOOLS,
     executeTool,
   };
 }
+
+export { CODER_TOOLS };

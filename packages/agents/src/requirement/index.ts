@@ -22,11 +22,14 @@ export type RequirementAgent = {
 
 export function createRequirementAgent(input: {
   systemPrompt: string;
+  tools?: LlmToolDefinition[];
 }): RequirementAgent {
   return {
     displayName: REQUIREMENT_DISPLAY_NAME,
     systemPrompt: input.systemPrompt,
-    tools: REQUIREMENT_TOOLS,
+    tools: input.tools ?? REQUIREMENT_TOOLS,
     executeTool: executeRequirementTool,
   };
 }
+
+export { REQUIREMENT_TOOLS };

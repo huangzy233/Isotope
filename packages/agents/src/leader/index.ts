@@ -23,11 +23,14 @@ export type LeaderAgent = {
 
 export function createLeaderAgent(input: {
   systemPrompt: string;
+  tools?: LlmToolDefinition[];
 }): LeaderAgent {
   return {
     displayName: LEADER_DISPLAY_NAME,
     systemPrompt: input.systemPrompt,
-    tools: LEADER_TOOLS,
+    tools: input.tools ?? LEADER_TOOLS,
     executeTool: executeLeaderTool,
   };
 }
+
+export { LEADER_TOOLS };
