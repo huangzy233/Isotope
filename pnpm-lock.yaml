@@ -160,6 +160,9 @@ importers:
       '@isotope/llm':
         specifier: workspace:*
         version: link:../llm
+      '@isotope/memory':
+        specifier: workspace:*
+        version: link:../memory
       '@isotope/preview':
         specifier: workspace:*
         version: link:../preview

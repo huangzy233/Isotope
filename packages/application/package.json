@@ -18,6 +18,7 @@
     "@isotope/agents": "workspace:*",
     "@isotope/identity": "workspace:*",
     "@isotope/llm": "workspace:*",
+    "@isotope/memory": "workspace:*",
     "@isotope/preview": "workspace:*",
     "@isotope/workspace": "workspace:*"
   },
