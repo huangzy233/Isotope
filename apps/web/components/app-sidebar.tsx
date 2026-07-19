@@ -140,8 +140,8 @@ export function AppSidebar({
                           ? "justify-center px-0 py-1.5"
                           : "gap-2 py-1.5 pl-2 pr-8",
                         active
-                          ? "bg-accent font-medium text-accent-foreground"
-                          : "text-foreground hover:bg-accent/60",
+                          ? "border-l-2 border-primary bg-primary/5 font-medium text-foreground"
+                          : "border-l-2 border-transparent text-foreground hover:bg-accent/60",
                       )}
                       title={project.name}
                     >

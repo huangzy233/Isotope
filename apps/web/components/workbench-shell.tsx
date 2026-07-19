@@ -1236,10 +1236,16 @@ export function WorkbenchShell({
               }}
             >
               <TabsList className="h-8">
-                <TabsTrigger value="preview" className="text-xs">
+                <TabsTrigger
+                  value="preview"
+                  className="text-xs data-[state=active]:bg-primary data-[state=active]:text-primary-foreground"
+                >
                   应用查看器
                 </TabsTrigger>
-                <TabsTrigger value="editor" className="text-xs">
+                <TabsTrigger
+                  value="editor"
+                  className="text-xs data-[state=active]:bg-primary data-[state=active]:text-primary-foreground"
+                >
                   编辑器
                 </TabsTrigger>
               </TabsList>
@@ -1409,7 +1415,7 @@ function MessageRow({
               {/* Check sits on the same vertical axis as the dashed rail */}
               <CheckCircle2
                 aria-hidden
-                className="size-3.5 shrink-0 text-muted-foreground"
+                className="size-3.5 shrink-0 text-success"
               />
               <span className="min-w-0 flex-1">已处理 {stepCount} 步</span>
               <ChevronUp
@@ -1428,7 +1434,7 @@ function MessageRow({
                   <li key={phase.key} className="relative space-y-1.5">
                     <span
                       aria-hidden
-                      className="absolute -left-4 top-1.5 size-1.5 -translate-x-1/2 rounded-full bg-muted-foreground/45 ring-2 ring-card"
+                      className="absolute -left-4 top-1.5 size-1.5 -translate-x-1/2 rounded-full bg-success ring-2 ring-card"
                     />
                     {phase.thinking ? (
                       <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground/80">
