@@ -2,4 +2,4 @@
 
 Configuration for **app**. Prefer YAML/JSON over code.
 
-演示登录账号见 `demo-users.yaml`（默认 `demo`/`demo`、`reviewer`/`reviewer`）。
+演示登录账号由环境变量 `DEMO_USERS`（JSON 多组）注入（见 `apps/web/.env.example`），不在此目录存放。

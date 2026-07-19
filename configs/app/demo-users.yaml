@@ -1,6 +1,0 @@
-# configs/app/demo-users.yaml
-users:
-  - username: demo
-    password: demo
-  - username: reviewer
-    password: reviewer

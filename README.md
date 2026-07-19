@@ -6,7 +6,7 @@
 
 ## 核心能力
 
-- **内置登录**：演示账号见 `configs/app/demo-users.yaml`（默认 `demo`/`demo`、`reviewer`/`reviewer`）
+- **内置登录**：账号由环境变量 `DEMO_USERS`（JSON 数组）注入，支持多组（示例见 `.env.example`）
 - **对话生成**：多轮对话驱动改码；助手消息支持流式输出
 - **模式开关**（可独立组合；都关 = Engineer）
   - **Engineer**：Alex 直接改码
@@ -48,6 +48,7 @@ cp apps/web/.env.example apps/web/.env.local
 | 变量 | 说明 |
 |------|------|
 | `SESSION_SECRET` | 会话签名密钥（本地可先用示例值） |
+| `DEMO_USERS` | 登录账号 JSON 数组，如 `[{"username":"demo","password":"demo"}]` |
 | `LLM_API_KEY` | 模型 API Key（**勿提交仓库**） |
 | `LLM_BASE_URL` | OpenAI-compatible 接口根地址（如 DeepSeek：`https://api.deepseek.com`） |
 | `LLM_MODEL` | 默认模型名（如 `deepseek-v4-pro`） |

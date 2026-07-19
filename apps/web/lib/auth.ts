@@ -1,7 +1,6 @@
 import { cookies } from "next/headers";
 import { getSession, login as appLogin } from "@isotope/application";
 import { loadDemoUsers, type DemoUser } from "@isotope/identity";
-import { demoUsersConfigPath } from "./paths";
 
 export const SESSION_COOKIE = "isotope_session";
 
@@ -14,7 +13,7 @@ export function getSessionSecret(): string {
 let cachedUsers: DemoUser[] | null = null;
 
 export function getDemoUsers(): DemoUser[] {
-  if (!cachedUsers) cachedUsers = loadDemoUsers(demoUsersConfigPath());
+  if (!cachedUsers) cachedUsers = loadDemoUsers();
   return cachedUsers;
 }
 
