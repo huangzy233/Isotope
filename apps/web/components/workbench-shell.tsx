@@ -20,7 +20,7 @@ import { StatusBadge } from "@/components/status-badge";
 import { TaskCard } from "@/components/task-card";
 import { VersionCard } from "@/components/version-card";
 import { VersionHistoryDialog } from "@/components/version-history-dialog";
-import { CheckCircle2, ChevronUp } from "lucide-react";
+import { CheckCircle2, ChevronUp, Maximize2, Minimize2 } from "lucide-react";
 import { ToolCallGroup } from "@/components/tool-call-row";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -337,6 +337,7 @@ export function WorkbenchShell({
   const [dragging, setDragging] = useState(false);
   const [preview, setPreview] = useState<PreviewSnapshot | null>(null);
   const [viewerMode, setViewerMode] = useState<ViewerMode>("preview");
+  const [immersive, setImmersive] = useState(false);
   const [versionsOpen, setVersionsOpen] = useState(false);
   const [versionRevisions, setVersionRevisions] = useState<
     Record<number, string | null>
@@ -376,6 +377,18 @@ export function WorkbenchShell({
       setViewerMode("preview");
     }
   }, [project.id]);
+
+  useEffect(() => {
+    if (!immersive) return;
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setImmersive(false);
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [immersive]);
 
   function persistViewerMode(next: ViewerMode) {
     setViewerMode(next);
@@ -1075,7 +1088,12 @@ export function WorkbenchShell({
         className="flex min-h-0 flex-1 flex-col xl:flex-row"
         style={chatWidthStyle}
       >
-        <section className="flex min-h-[50vh] w-full min-w-0 flex-col border-b border-border xl:min-h-0 xl:w-[var(--chat-pct)] xl:shrink-0 xl:border-b-0">
+        <section
+          className={cn(
+            "flex min-h-[50vh] w-full min-w-0 flex-col border-b border-border xl:min-h-0 xl:w-[var(--chat-pct)] xl:shrink-0 xl:border-b-0",
+            immersive && "hidden",
+          )}
+        >
           <PanelHeader
             title="对话"
             trailing={
@@ -1186,7 +1204,8 @@ export function WorkbenchShell({
           aria-valuenow={Math.round(chatPct)}
           tabIndex={0}
           className={cn(
-            "relative z-10 hidden w-0 shrink-0 xl:block",
+            "relative z-10 w-0 shrink-0",
+            immersive ? "hidden" : "hidden xl:block",
             "before:absolute before:inset-y-0 before:left-1/2 before:w-px before:-translate-x-1/2 before:bg-border",
             "after:absolute after:inset-y-0 after:left-1/2 after:w-3 after:-translate-x-1/2 after:cursor-col-resize",
             dragging && "before:bg-foreground/40",
@@ -1225,22 +1244,39 @@ export function WorkbenchShell({
                 </TabsTrigger>
               </TabsList>
             </Tabs>
-            {viewerMode === "preview" ? (
-              <div className="flex items-center gap-2">
-                <StatusBadge status={preview?.status ?? "idle"} />
-                {preview?.status === "ready" ||
-                preview?.status === "building" ? (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => void handleRebuild()}
-                  >
-                    刷新
-                  </Button>
-                ) : null}
-              </div>
-            ) : null}
+            <div className="flex items-center gap-2">
+              {viewerMode === "preview" ? (
+                <>
+                  <StatusBadge status={preview?.status ?? "idle"} />
+                  {preview?.status === "ready" ||
+                  preview?.status === "building" ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => void handleRebuild()}
+                    >
+                      刷新
+                    </Button>
+                  ) : null}
+                </>
+              ) : null}
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                aria-pressed={immersive}
+                aria-label={immersive ? "退出沉浸" : "沉浸"}
+                onClick={() => setImmersive((v) => !v)}
+              >
+                {immersive ? (
+                  <Minimize2 className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+                ) : (
+                  <Maximize2 className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+                )}
+                {immersive ? "退出沉浸" : "沉浸"}
+              </Button>
+            </div>
           </div>
           {viewerMode === "editor" ? (
             <WorkspaceEditorPane projectId={project.id} />

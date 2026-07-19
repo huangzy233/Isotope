@@ -42,7 +42,7 @@
 - Consumes: 现有 `viewerMode`、`chatPct`、对话 section / separator / 右侧 section 结构
 - Produces: `const [immersive, setImmersive] = useState(false)`；沉浸时对话与 separator 不可见
 
-- [ ] **Step 1: 增加图标 import 与 `immersive` 状态**
+- [x] **Step 1: 增加图标 import 与 `immersive` 状态**
 
 在现有 lucide import 中加入 `Maximize2`、`Minimize2`：
 
@@ -56,7 +56,7 @@ import { CheckCircle2, ChevronUp, Maximize2, Minimize2 } from "lucide-react";
 const [immersive, setImmersive] = useState(false);
 ```
 
-- [ ] **Step 2: Esc 退出**
+- [x] **Step 2: Esc 退出**
 
 在组件内（与其他 `useEffect` 并列）增加：
 
@@ -74,7 +74,7 @@ useEffect(() => {
 }, [immersive]);
 ```
 
-- [ ] **Step 3: 条件隐藏对话区与分隔条**
+- [x] **Step 3: 条件隐藏对话区与分隔条**
 
 对话 `section`：在现有 `className` 上，当 `immersive` 为 true 时追加 `hidden`（保留挂载以免重挂 Composer 状态意外丢失；若更倾向不渲染，用 `{!immersive && ( <section>...</section> )}` 亦可，优先 `hidden` 以保留消息滚动位置）。
 
@@ -88,7 +88,7 @@ className={cn(
 )}
 ```
 
-- [ ] **Step 4: 顶栏沉浸按钮（preview 与 editor 均显示）**
+- [x] **Step 4: 顶栏沉浸按钮（preview 与 editor 均显示）**
 
 将右侧顶栏从「仅 preview 显示 StatusBadge/刷新」改为：左侧仍 Tabs；右侧为操作组——预览时保留 StatusBadge + 刷新；**无论何种 `viewerMode`** 都显示沉浸切换按钮：
 
@@ -129,7 +129,7 @@ className={cn(
 
 删除原先「仅 `viewerMode === "preview"` 才渲染整个右侧操作区」的包裹，避免 editor 下看不到沉浸按钮。
 
-- [ ] **Step 5: 手工验收**
+- [x] **Step 5: 手工验收**
 
 Run（开发服务器若已开则直接浏览器）：打开任意项目工作台。
 
@@ -140,7 +140,7 @@ Expected:
 4. 非沉浸按 Esc → 无变化。
 5. 窄视口（或 DevTools 移动宽度）沉浸仍隐藏对话区。
 
-- [ ] **Step 6: Commit（仅当用户要求时）**
+- [x] **Step 6: Commit（仅当用户要求时）**
 
 ```bash
 git add apps/web/components/workbench-shell.tsx
