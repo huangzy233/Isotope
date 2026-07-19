@@ -99,6 +99,7 @@ describe("runTurn", () => {
       onToken: (t) => tokens.push(t),
     });
     expect(files.get("src/App.tsx")).toContain("App");
+    expect(result.writtenPaths).toEqual(["src/App.tsx"]);
     expect(result.filesChanged).toBe(true);
     expect(result.assistantText).toBe("已更新 App");
     expect(tokens.join("")).toBe("已更新 App");
@@ -158,6 +159,7 @@ describe("runTurn", () => {
 
     expect(thinking.join("")).toBe("我先读一下");
     expect(tokens.join("")).toBe("读完了");
+    expect(result.writtenPaths).toEqual([]);
     expect(result.assistantText).toBe("读完了");
     expect(result.assistantText).not.toContain("我先读一下");
     expect(tools).toEqual([
@@ -404,6 +406,7 @@ describe("runTurn", () => {
     });
 
     expect(result.assistantText).toBe("（已达工具轮次上限）");
+    expect(result.writtenPaths).toEqual([]);
     expect(tokens.join("")).toBe("（已达工具轮次上限）");
     expect(result.process.steps.some((s) => s.type === "thinking")).toBe(true);
     expect(

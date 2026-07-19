@@ -52,5 +52,6 @@ export type RunTurnInput<TPort = WorkspaceToolPort> = {
 export type RunTurnResult = {
   assistantText: string;
   filesChanged: boolean;
+  writtenPaths: string[];
   process: TurnProcess;
 };

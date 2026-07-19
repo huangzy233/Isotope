@@ -61,6 +61,7 @@ export async function runTurn<TPort = WorkspaceToolPort>(
   ];
 
   let filesChanged = false;
+  const writtenPaths: string[] = [];
   let assistantText = "";
   const process: TurnProcess = { steps: [] };
 
@@ -137,6 +138,18 @@ export async function runTurn<TPort = WorkspaceToolPort>(
 
           if (call.function.name === "write_file" && outcome.ok) {
             filesChanged = true;
+            try {
+              const path = JSON.parse(call.function.arguments).path;
+              if (
+                typeof path === "string" &&
+                path &&
+                !writtenPaths.includes(path)
+              ) {
+                writtenPaths.push(path);
+              }
+            } catch {
+              /* ignore */
+            }
           }
           messages.push({
             role: "tool",
@@ -159,20 +172,20 @@ export async function runTurn<TPort = WorkspaceToolPort>(
         onToken(chunk);
         assistantText += chunk;
       }
-      return { assistantText, filesChanged, process };
+      return { assistantText, filesChanged, writtenPaths, process };
     }
   }
 
   if (assistantText.length > 0) {
     onToken(ROUND_LIMIT_NOTE);
     assistantText += ROUND_LIMIT_NOTE;
-    return { assistantText, filesChanged, process };
+    return { assistantText, filesChanged, writtenPaths, process };
   }
 
   if (hasThinking(process.steps)) {
     onToken(ROUND_LIMIT_NOTE);
     assistantText = ROUND_LIMIT_NOTE;
-    return { assistantText, filesChanged, process };
+    return { assistantText, filesChanged, writtenPaths, process };
   }
 
   throw new Error("工具调用轮次过多");
