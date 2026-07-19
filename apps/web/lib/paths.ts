@@ -4,6 +4,14 @@ export function monorepoRoot(): string {
   return path.resolve(process.cwd(), "../..");
 }
 
+export function promptsRoot(): string {
+  return path.join(monorepoRoot(), "prompts");
+}
+
+export function llmConfigDir(): string {
+  return path.join(monorepoRoot(), "configs/llm");
+}
+
 export function demoUsersConfigPath(): string {
   return path.join(monorepoRoot(), "configs/app/demo-users.yaml");
 }
@@ -17,7 +25,7 @@ export function templatePath(): string {
 }
 
 export function llmConfigPath(): string {
-  return path.join(monorepoRoot(), "configs/llm/default.yaml");
+  return path.join(llmConfigDir(), "default.yaml");
 }
 
 export function alexSystemPromptPath(): string {

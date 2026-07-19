@@ -1,0 +1,4 @@
+id: leader/mike-summary
+version: v1
+model: deepseek-v4-pro
+tools: []

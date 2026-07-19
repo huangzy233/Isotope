@@ -1,0 +1,6 @@
+id: coding/alex-system
+version: v1
+tools:
+  - list_files
+  - read_file
+  - write_file
