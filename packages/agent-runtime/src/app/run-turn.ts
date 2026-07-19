@@ -117,10 +117,12 @@ export async function runTurn<TPort = WorkspaceToolPort>(
             summary,
           });
 
-          const outcome = agent.executeTool(
-            call.function.name,
-            call.function.arguments,
-            port,
+          const outcome = await Promise.resolve(
+            agent.executeTool(
+              call.function.name,
+              call.function.arguments,
+              port,
+            ),
           );
 
           const toolStep = process.steps[process.steps.length - 1];

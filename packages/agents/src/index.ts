@@ -20,3 +20,11 @@ export {
   type ConfirmRequirementPort,
   type RequirementAgent,
 } from "./requirement/index.js";
+export {
+  QA_DISPLAY_NAME,
+  QA_TOOLS,
+  createQaAgent,
+  executeQaTool,
+  type QaAgent,
+  type QaToolPort,
+} from "./qa/index.js";

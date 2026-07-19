@@ -365,6 +365,60 @@ describe("runTurn", () => {
     expect(toolMsg?.content?.length).toBe(8000 + suffix.length);
   });
 
+  it("awaits async executeTool results before continuing", async () => {
+    let resolveTool!: (value: { ok: true; result: string }) => void;
+    const toolPromise = new Promise<{ ok: true; result: string }>((resolve) => {
+      resolveTool = resolve;
+    });
+    const agent = {
+      ...createCoderAgent({ systemPrompt: "test" }),
+      executeTool: () => toolPromise,
+    };
+    const tokens: string[] = [];
+    const turnPromise = runTurn({
+      llm: llmFromScript([
+        [
+          {
+            type: "tool_calls",
+            toolCalls: [
+              {
+                id: "c1",
+                type: "function",
+                function: {
+                  name: "list_files",
+                  arguments: "{}",
+                },
+              },
+            ],
+          },
+          { type: "finished", finishReason: "tool_calls" },
+        ],
+        [
+          { type: "content_delta", text: "done" },
+          { type: "finished", finishReason: "stop" },
+        ],
+      ]),
+      model: "test-model",
+      agent,
+      port: {
+        listFiles: () => [],
+        readFile: () => "",
+        writeFile: () => {},
+        ...memoryStubs,
+      },
+      history: [{ role: "user", content: "list" }],
+      maxToolRounds: 8,
+      onToken: (t) => tokens.push(t),
+    });
+
+    await Promise.resolve();
+    expect(tokens).toEqual([]);
+    resolveTool({ ok: true, result: "[]" });
+    const result = await turnPromise;
+    expect(result.assistantText).toBe("done");
+    expect(tokens.join("")).toBe("done");
+  });
+
   it("returns round-limit note when maxToolRounds exhausted with thinking but no final text", async () => {
     const files = new Map<string, string>([["src/App.tsx", "x"]]);
     const port = {

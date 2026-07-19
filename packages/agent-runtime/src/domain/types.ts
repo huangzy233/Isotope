@@ -23,6 +23,10 @@ export type TurnProcessStep =
 
 export type TurnProcess = { steps: TurnProcessStep[] };
 
+export type ToolOutcome =
+  | { ok: true; result: string }
+  | { ok: false; error: string };
+
 export type TurnAgent<TPort = unknown> = {
   displayName: string;
   systemPrompt: string;
@@ -31,7 +35,7 @@ export type TurnAgent<TPort = unknown> = {
     name: string,
     argsJson: string,
     port: TPort,
-  ): { ok: true; result: string } | { ok: false; error: string };
+  ): ToolOutcome | Promise<ToolOutcome>;
 };
 
 export type RunTurnInput<TPort = WorkspaceToolPort> = {
