@@ -23,27 +23,3 @@ export function dataRoot(): string {
 export function templatePath(): string {
   return path.join(monorepoRoot(), "templates/vite-react");
 }
-
-export function llmConfigPath(): string {
-  return path.join(llmConfigDir(), "default.yaml");
-}
-
-export function alexSystemPromptPath(): string {
-  return path.join(monorepoRoot(), "prompts/coding/alex-system.v1.md");
-}
-
-export function patSystemPromptPath(): string {
-  return path.join(monorepoRoot(), "prompts/requirement/pat-system.v1.md");
-}
-
-export function mikeSystemPromptPath(): string {
-  return path.join(monorepoRoot(), "prompts/leader/mike-system.v1.md");
-}
-
-export function mikeSummaryPromptPath(): string {
-  return path.join(monorepoRoot(), "prompts/leader/mike-summary.v1.md");
-}
-
-export function versionSummaryPromptPath(): string {
-  return path.join(monorepoRoot(), "prompts/workspace/version-summary.v1.md");
-}

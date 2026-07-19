@@ -368,12 +368,18 @@ async function maybeRunMikeSummary(input: {
     checkpoint,
   );
 
+  const summaryPort: TaskToolPort = {
+    createTask: () => {
+      throw new Error("总结回合不可创建任务");
+    },
+  };
+
   try {
     const result = await runTurn({
       llm: deps.llm,
       model: deps.leaderSummaryModel,
       agent: deps.leaderSummary,
-      port: {},
+      port: summaryPort,
       history: historyForProject(deps.workspace, projectId),
       maxToolRounds: Math.min(2, deps.maxToolRounds),
       ...callbacks,

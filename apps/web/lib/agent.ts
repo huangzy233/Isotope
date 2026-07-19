@@ -1,6 +1,7 @@
-import { readFileSync } from "node:fs";
-import { parse } from "yaml";
 import {
+  CODER_TOOLS,
+  LEADER_TOOLS,
+  REQUIREMENT_TOOLS,
   createCoderAgent,
   createLeaderAgent,
   createRequirementAgent,
@@ -8,52 +9,79 @@ import {
   type LeaderAgent,
   type RequirementAgent,
 } from "@isotope/agents";
-import { createOpenAiCompatibleClient, type LlmClient } from "@isotope/llm";
 import {
-  alexSystemPromptPath,
-  llmConfigPath,
-  mikeSummaryPromptPath,
-  mikeSystemPromptPath,
-  patSystemPromptPath,
-} from "./paths";
+  createLlmRouter,
+  loadLlmDefaults,
+  loadLlmProviders,
+  type LlmClient,
+} from "@isotope/llm";
+import { filterTools } from "./filter-tools";
+import { llmConfigDir, promptsRoot } from "./paths";
+import { createPromptLoader } from "./prompt-loader";
 
-type LlmFileConfig = {
-  baseUrl: string;
-  model: string;
-  timeoutMs: number;
+type SharedRouter = {
+  llm: LlmClient;
   maxToolRounds: number;
+  defaultModel: string;
 };
 
-export function loadLlmFileConfig(): LlmFileConfig {
-  const data = parse(readFileSync(llmConfigPath(), "utf8")) as LlmFileConfig;
-  return data;
+let cachedRouter: SharedRouter | null = null;
+let cachedLoader: ReturnType<typeof createPromptLoader> | null = null;
+
+function resolveDefaultModel(fileDefault: string): string {
+  return process.env.LLM_MODEL?.trim() || fileDefault;
 }
 
-function createSharedLlm(): { llm: LlmClient; maxToolRounds: number } {
-  const file = loadLlmFileConfig();
-  const apiKey = process.env.LLM_API_KEY?.trim() ?? "";
-  if (!apiKey) {
-    throw new Error("未配置 LLM_API_KEY");
-  }
-  const llm = createOpenAiCompatibleClient({
-    apiKey,
-    baseUrl: process.env.LLM_BASE_URL?.trim() || file.baseUrl,
-    model: process.env.LLM_MODEL?.trim() || file.model,
-    timeoutMs: file.timeoutMs,
+function createSharedRouter(): SharedRouter {
+  const configDir = llmConfigDir();
+  const defaults = loadLlmDefaults(configDir);
+  const providers = loadLlmProviders(configDir);
+  const llm = createLlmRouter({
+    providers,
+    resolveApiKey: (envName) => process.env[envName]?.trim() ?? "",
+    overrideBaseUrl: process.env.LLM_BASE_URL?.trim() || undefined,
   });
-  return { llm, maxToolRounds: file.maxToolRounds };
+  return {
+    llm,
+    maxToolRounds: defaults.maxToolRounds,
+    defaultModel: resolveDefaultModel(defaults.defaultModel),
+  };
+}
+
+/** Lazy singleton — same style as getPreview. */
+export function getSharedRouter(): SharedRouter {
+  if (!cachedRouter) {
+    cachedRouter = createSharedRouter();
+  }
+  return cachedRouter;
+}
+
+export function getPromptLoader(): ReturnType<typeof createPromptLoader> {
+  if (!cachedLoader) {
+    const { defaultModel } = getSharedRouter();
+    cachedLoader = createPromptLoader({
+      promptsRoot: promptsRoot(),
+      defaultModel,
+    });
+  }
+  return cachedLoader;
 }
 
 export function createTurnDeps(): {
   llm: LlmClient;
-  agent: ReturnType<typeof createCoderAgent>;
+  model: string;
+  agent: CoderAgent;
   maxToolRounds: number;
 } {
-  const { llm, maxToolRounds } = createSharedLlm();
-  const systemPrompt = readFileSync(alexSystemPromptPath(), "utf8");
+  const { llm, maxToolRounds } = getSharedRouter();
+  const bundle = getPromptLoader().load("coding/alex-system");
   return {
     llm,
-    agent: createCoderAgent({ systemPrompt }),
+    model: bundle.model,
+    agent: createCoderAgent({
+      systemPrompt: bundle.system,
+      tools: filterTools(CODER_TOOLS, bundle.tools),
+    }),
     maxToolRounds,
   };
 }
@@ -61,33 +89,54 @@ export function createTurnDeps(): {
 export function createTeamTurnDeps(): {
   llm: LlmClient;
   leader: LeaderAgent;
-  leaderSummaryPrompt: string;
+  leaderModel: string;
+  leaderSummary: LeaderAgent;
+  leaderSummaryModel: string;
   coder: CoderAgent;
+  coderModel: string;
   maxToolRounds: number;
 } {
-  const { llm, maxToolRounds } = createSharedLlm();
-  const mikePrompt = readFileSync(mikeSystemPromptPath(), "utf8");
-  const mikeSummaryPrompt = readFileSync(mikeSummaryPromptPath(), "utf8");
-  const alexPrompt = readFileSync(alexSystemPromptPath(), "utf8");
+  const { llm, maxToolRounds } = getSharedRouter();
+  const loader = getPromptLoader();
+  const leaderBundle = loader.load("leader/mike-system");
+  const summaryBundle = loader.load("leader/mike-summary");
+  const coderBundle = loader.load("coding/alex-system");
   return {
     llm,
-    leader: createLeaderAgent({ systemPrompt: mikePrompt }),
-    leaderSummaryPrompt: mikeSummaryPrompt,
-    coder: createCoderAgent({ systemPrompt: alexPrompt }),
+    leader: createLeaderAgent({
+      systemPrompt: leaderBundle.system,
+      tools: filterTools(LEADER_TOOLS, leaderBundle.tools),
+    }),
+    leaderModel: leaderBundle.model,
+    leaderSummary: createLeaderAgent({
+      systemPrompt: summaryBundle.system,
+      tools: filterTools(LEADER_TOOLS, summaryBundle.tools),
+    }),
+    leaderSummaryModel: summaryBundle.model,
+    coder: createCoderAgent({
+      systemPrompt: coderBundle.system,
+      tools: filterTools(CODER_TOOLS, coderBundle.tools),
+    }),
+    coderModel: coderBundle.model,
     maxToolRounds,
   };
 }
 
 export function createPlanTurnDeps(): {
   llm: LlmClient;
+  model: string;
   agent: RequirementAgent;
   maxToolRounds: number;
 } {
-  const { llm, maxToolRounds } = createSharedLlm();
-  const systemPrompt = readFileSync(patSystemPromptPath(), "utf8");
+  const { llm, maxToolRounds } = getSharedRouter();
+  const bundle = getPromptLoader().load("requirement/pat-system");
   return {
     llm,
-    agent: createRequirementAgent({ systemPrompt }),
+    model: bundle.model,
+    agent: createRequirementAgent({
+      systemPrompt: bundle.system,
+      tools: filterTools(REQUIREMENT_TOOLS, bundle.tools),
+    }),
     maxToolRounds,
   };
 }
