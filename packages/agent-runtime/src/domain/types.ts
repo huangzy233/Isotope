@@ -41,6 +41,7 @@ export type RunTurnInput<TPort = WorkspaceToolPort> = {
   port: TPort;
   history: Array<{ role: "user" | "assistant"; content: string }>;
   maxToolRounds: number;
+  toolResultMaxChars?: number;
   signal?: AbortSignal;
   onToken: (text: string) => void;
   onThinking?: (text: string) => void;

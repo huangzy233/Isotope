@@ -1,6 +1,6 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { createCoderAgent } from "@isotope/agents";
-import type { LlmClient, LlmStreamEvent } from "@isotope/llm";
+import type { LlmClient, LlmMessage, LlmStreamEvent } from "@isotope/llm";
 import { runTurn } from "./run-turn.js";
 
 function llmFromScript(
@@ -253,6 +253,114 @@ describe("runTurn", () => {
       { name: "write_file", state: "start", summary: "src/App.tsx" },
       { name: "write_file", state: "end", summary: "src/App.tsx" },
     ]);
+  });
+
+  it("truncates large tool results before next llm.complete", async () => {
+    const largeContent = "x".repeat(9000);
+    const port = {
+      listFiles: () => ["big.txt"],
+      readFile: () => largeContent,
+      writeFile: () => {},
+      ...memoryStubs,
+    };
+    const agent = createCoderAgent({ systemPrompt: "test" });
+    const capturedMessages: LlmMessage[][] = [];
+    let callIndex = 0;
+    const llm: LlmClient = {
+      async *complete(input) {
+        capturedMessages.push([...input.messages]);
+        if (callIndex === 0) {
+          callIndex++;
+          yield {
+            type: "tool_calls",
+            toolCalls: [
+              {
+                id: "c1",
+                type: "function",
+                function: {
+                  name: "read_file",
+                  arguments: JSON.stringify({ path: "big.txt" }),
+                },
+              },
+            ],
+          };
+          yield { type: "finished", finishReason: "tool_calls" };
+          return;
+        }
+        yield { type: "content_delta", text: "done" };
+        yield { type: "finished", finishReason: "stop" };
+      },
+    };
+
+    await runTurn({
+      llm,
+      model: "test-model",
+      agent,
+      port,
+      history: [{ role: "user", content: "读大文件" }],
+      maxToolRounds: 8,
+      onToken: () => {},
+    });
+
+    const toolMsg = capturedMessages[1]?.find((m) => m.role === "tool");
+    const suffix = "\n…(已截断，可再 read_file)";
+    expect(toolMsg?.content).toContain(suffix);
+    expect(toolMsg?.content?.length).toBe(8000 + suffix.length);
+  });
+
+  it("truncates large tool error content before next llm.complete", async () => {
+    const largeError = "e".repeat(9000);
+    const agent = {
+      ...createCoderAgent({ systemPrompt: "test" }),
+      executeTool: () => ({ ok: false as const, error: largeError }),
+    };
+    const capturedMessages: LlmMessage[][] = [];
+    let callIndex = 0;
+    const llm: LlmClient = {
+      async *complete(input) {
+        capturedMessages.push([...input.messages]);
+        if (callIndex === 0) {
+          callIndex++;
+          yield {
+            type: "tool_calls",
+            toolCalls: [
+              {
+                id: "c1",
+                type: "function",
+                function: {
+                  name: "read_file",
+                  arguments: JSON.stringify({ path: "missing.txt" }),
+                },
+              },
+            ],
+          };
+          yield { type: "finished", finishReason: "tool_calls" };
+          return;
+        }
+        yield { type: "content_delta", text: "done" };
+        yield { type: "finished", finishReason: "stop" };
+      },
+    };
+
+    await runTurn({
+      llm,
+      model: "test-model",
+      agent,
+      port: {
+        listFiles: () => [],
+        readFile: () => "",
+        writeFile: () => {},
+        ...memoryStubs,
+      },
+      history: [{ role: "user", content: "读文件" }],
+      maxToolRounds: 8,
+      onToken: () => {},
+    });
+
+    const toolMsg = capturedMessages[1]?.find((m) => m.role === "tool");
+    const suffix = "\n…(已截断，可再 read_file)";
+    expect(toolMsg?.content).toContain(suffix);
+    expect(toolMsg?.content?.length).toBe(8000 + suffix.length);
   });
 
   it("returns round-limit note when maxToolRounds exhausted with thinking but no final text", async () => {

@@ -9,6 +9,13 @@ import type {
 import { toolSummary } from "./tool-summary.js";
 
 const ROUND_LIMIT_NOTE = "（已达工具轮次上限）";
+const TOOL_RESULT_MAX_CHARS = 8000;
+const TOOL_RESULT_TRUNCATED_SUFFIX = "\n…(已截断，可再 read_file)";
+
+function clipToolContent(content: string, max: number): string {
+  if (content.length <= max) return content;
+  return content.slice(0, max) + TOOL_RESULT_TRUNCATED_SUFFIX;
+}
 
 function appendThinking(process: TurnProcess, text: string): void {
   const last = process.steps[process.steps.length - 1];
@@ -33,6 +40,7 @@ export async function runTurn<TPort = WorkspaceToolPort>(
     port,
     history,
     maxToolRounds,
+    toolResultMaxChars = TOOL_RESULT_MAX_CHARS,
     signal,
     onToken,
     onThinking,
@@ -133,7 +141,10 @@ export async function runTurn<TPort = WorkspaceToolPort>(
           messages.push({
             role: "tool",
             tool_call_id: call.id,
-            content: outcome.ok ? outcome.result : outcome.error,
+            content: clipToolContent(
+              outcome.ok ? outcome.result : outcome.error,
+              toolResultMaxChars,
+            ),
           });
         }
         continue;
