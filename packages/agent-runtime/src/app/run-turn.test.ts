@@ -17,6 +17,11 @@ function llmFromScript(
   };
 }
 
+const memoryStubs = {
+  setPreference: () => ({ ok: true as const }),
+  rememberDecision: () => ({ ok: true as const }),
+};
+
 describe("runTurn", () => {
   it("passes model to llm.complete", async () => {
     const calls: Array<{ model?: string }> = [];
@@ -35,6 +40,7 @@ describe("runTurn", () => {
         listFiles: () => [],
         readFile: () => "",
         writeFile: () => {},
+        ...memoryStubs,
       },
       history: [{ role: "user", content: "hi" }],
       maxToolRounds: 8,
@@ -55,6 +61,7 @@ describe("runTurn", () => {
       writeFile: (p: string, c: string) => {
         files.set(p, c);
       },
+      ...memoryStubs,
     };
     const agent = createCoderAgent({ systemPrompt: "test" });
     const tokens: string[] = [];
@@ -105,6 +112,7 @@ describe("runTurn", () => {
       writeFile: (p: string, c: string) => {
         files.set(p, c);
       },
+      ...memoryStubs,
     };
     const agent = createCoderAgent({ systemPrompt: "test" });
     const tokens: string[] = [];
@@ -180,6 +188,7 @@ describe("runTurn", () => {
       writeFile: (p: string, c: string) => {
         files.set(p, c);
       },
+      ...memoryStubs,
     };
     const agent = createCoderAgent({ systemPrompt: "test" });
     const tools: Array<{ name: string; state: string; summary?: string }> = [];
@@ -254,6 +263,7 @@ describe("runTurn", () => {
       writeFile: (p: string, c: string) => {
         files.set(p, c);
       },
+      ...memoryStubs,
     };
     const agent = createCoderAgent({ systemPrompt: "test" });
     const tokens: string[] = [];

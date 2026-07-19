@@ -2,3 +2,5 @@ id: leader/mike-system
 version: v1
 tools:
   - create_task
+  - set_preference
+  - remember_decision

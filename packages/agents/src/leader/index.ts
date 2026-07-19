@@ -8,6 +8,13 @@ export type TaskToolPort = {
     title: string;
     assignee: "Alex";
   }): { taskId: string; title: string; assignee: "Alex" };
+  setPreference(
+    key: string,
+    value: string,
+  ): { ok: true } | { ok: false; error: string };
+  rememberDecision(
+    text: string,
+  ): { ok: true } | { ok: false; error: string };
 };
 
 export type LeaderAgent = {

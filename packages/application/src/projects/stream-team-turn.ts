@@ -1,7 +1,7 @@
 import { runTurn } from "@isotope/agent-runtime";
 import type { CoderAgent, LeaderAgent, TaskToolPort } from "@isotope/agents";
 import type { LlmClient } from "@isotope/llm";
-import type { PreferenceStore } from "@isotope/memory";
+import { isPreferenceKey, type PreferenceStore } from "@isotope/memory";
 import type { PreviewService } from "@isotope/preview";
 import type {
   MessageProcess,
@@ -9,6 +9,7 @@ import type {
   TaskStatus,
   WorkspaceStore,
 } from "@isotope/workspace";
+import { appendDecision } from "./append-decision.js";
 import { buildTurnContext } from "./build-turn-context.js";
 import { checkpointProcess } from "./checkpoint-process.js";
 import { enqueuePreviewBuild } from "./enqueue-preview-build.js";
@@ -112,6 +113,40 @@ function historyForProject(
     },
   });
   return history;
+}
+
+function memoryToolMethods(
+  deps: TeamTurnDeps,
+  projectId: string,
+  ownerUserId: string,
+) {
+  return {
+    setPreference(key: string, value: string) {
+      if (!isPreferenceKey(key)) {
+        return { ok: false as const, error: "unknown key" };
+      }
+      try {
+        deps.preferences.upsertPreference(ownerUserId, key, value);
+        return { ok: true as const };
+      } catch (e) {
+        return {
+          ok: false as const,
+          error: e instanceof Error ? e.message : String(e),
+        };
+      }
+    },
+    rememberDecision(text: string) {
+      try {
+        appendDecision(deps.workspace, projectId, text);
+        return { ok: true as const };
+      } catch (e) {
+        return {
+          ok: false as const,
+          error: e instanceof Error ? e.message : String(e),
+        };
+      }
+    },
+  };
 }
 
 function trackProcess(
@@ -267,6 +302,7 @@ async function runAlexForTask(input: {
     readFile: (p: string) => deps.workspace.readFile(projectId, p),
     writeFile: (p: string, c: string) =>
       deps.workspace.writeFile(projectId, p, c),
+    ...memoryToolMethods(deps, projectId, ownerUserId),
   };
   const filePort = project
     ? createPlanGatedWritePort(project, basePort)
@@ -376,6 +412,7 @@ async function maybeRunMikeSummary(input: {
     createTask: () => {
       throw new Error("总结回合不可创建任务");
     },
+    ...memoryToolMethods(deps, projectId, ownerUserId),
   };
 
   try {
@@ -511,6 +548,7 @@ export function beginTeamTurn(
               assignee: task.assignee,
             };
           },
+          ...memoryToolMethods(deps, input.projectId, input.ownerUserId),
         };
 
         const mikeResult = await runTurn({

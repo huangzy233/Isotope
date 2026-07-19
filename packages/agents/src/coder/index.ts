@@ -9,6 +9,16 @@ export type WorkspaceToolPort = {
   writeFile(relativePath: string, content: string): void;
 };
 
+export type CoderToolPort = WorkspaceToolPort & {
+  setPreference(
+    key: string,
+    value: string,
+  ): { ok: true } | { ok: false; error: string };
+  rememberDecision(
+    text: string,
+  ): { ok: true } | { ok: false; error: string };
+};
+
 export type CoderAgent = {
   displayName: typeof CODER_DISPLAY_NAME;
   systemPrompt: string;
@@ -16,7 +26,7 @@ export type CoderAgent = {
   executeTool(
     name: string,
     argsJson: string,
-    port: WorkspaceToolPort,
+    port: CoderToolPort,
   ): { ok: true; result: string } | { ok: false; error: string };
 };
 

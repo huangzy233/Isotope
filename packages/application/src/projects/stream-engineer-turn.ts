@@ -1,9 +1,10 @@
 import { runTurn } from "@isotope/agent-runtime";
 import type { CoderAgent } from "@isotope/agents";
 import type { LlmClient } from "@isotope/llm";
-import type { PreferenceStore } from "@isotope/memory";
+import { isPreferenceKey, type PreferenceStore } from "@isotope/memory";
 import type { PreviewService } from "@isotope/preview";
 import type { MessageProcess, WorkspaceStore } from "@isotope/workspace";
+import { appendDecision } from "./append-decision.js";
 import { buildTurnContext } from "./build-turn-context.js";
 import { checkpointProcess } from "./checkpoint-process.js";
 import { enqueuePreviewBuild } from "./enqueue-preview-build.js";
@@ -173,6 +174,35 @@ export function beginEngineerTurn(
             deps.workspace.readFile(input.projectId, p),
           writeFile: (p: string, c: string) =>
             deps.workspace.writeFile(input.projectId, p, c),
+          setPreference(key: string, value: string) {
+            if (!isPreferenceKey(key)) {
+              return { ok: false as const, error: "unknown key" };
+            }
+            try {
+              deps.preferences.upsertPreference(
+                input.ownerUserId,
+                key,
+                value,
+              );
+              return { ok: true as const };
+            } catch (e) {
+              return {
+                ok: false as const,
+                error: e instanceof Error ? e.message : String(e),
+              };
+            }
+          },
+          rememberDecision(text: string) {
+            try {
+              appendDecision(deps.workspace, input.projectId, text);
+              return { ok: true as const };
+            } catch (e) {
+              return {
+                ok: false as const,
+                error: e instanceof Error ? e.message : String(e),
+              };
+            }
+          },
         };
         const port = createPlanGatedWritePort(project, basePort);
 

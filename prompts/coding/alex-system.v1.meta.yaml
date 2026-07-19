@@ -4,3 +4,5 @@ tools:
   - list_files
   - read_file
   - write_file
+  - set_preference
+  - remember_decision

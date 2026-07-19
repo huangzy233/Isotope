@@ -5,11 +5,15 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createCoderAgent } from "@isotope/agents";
 import type { LlmClient, LlmStreamEvent } from "@isotope/llm";
-import type { PreferenceStore } from "@isotope/memory";
+import {
+  createPreferenceStore,
+  type PreferenceStore,
+} from "@isotope/memory";
 import type { PreviewService, PreviewStatusSnapshot } from "@isotope/preview";
 import { createFsSqliteWorkspace } from "@isotope/workspace";
 import { createProject } from "./create-project.js";
 import { ASSISTANT_PLACEHOLDER } from "./placeholder.js";
+import { DECISIONS_PATH } from "./project-memory-paths.js";
 import {
   beginEngineerTurn,
   type EngineerTurnEvent,
@@ -871,5 +875,119 @@ describe("beginEngineerTurn", () => {
     expect(last?.content).toBe(ASSISTANT_PLACEHOLDER);
     resolveGate();
     await running;
+  });
+
+  it("remember_decision appends decisions.md via tool call", async () => {
+    const { project } = createProject(
+      {
+        ownerUserId: "demo",
+        requirement: "做一个空页面",
+        mode: "engineer",
+      },
+      workspace,
+    );
+    const preferences = createPreferenceStore({ dataRoot });
+
+    const begun = beginEngineerTurn(
+      {
+        ownerUserId: "demo",
+        projectId: project.id,
+        action: "continue",
+      },
+      {
+        workspace,
+        preferences,
+        preview: mockPreview(),
+        llm: llmFromScript([
+          [
+            {
+              type: "tool_calls",
+              toolCalls: [
+                {
+                  id: "d1",
+                  type: "function",
+                  function: {
+                    name: "remember_decision",
+                    arguments: JSON.stringify({ text: "用本地存储" }),
+                  },
+                },
+              ],
+            },
+            { type: "finished", finishReason: "tool_calls" },
+          ],
+          [
+            { type: "content_delta", text: "已记下决策" },
+            { type: "finished", finishReason: "stop" },
+          ],
+        ]),
+        agent: createCoderAgent({ systemPrompt: "test" }),
+        model: "test-model",
+        maxToolRounds: 8,
+      },
+    );
+    expect(begun.ok).toBe(true);
+    if (!begun.ok) return;
+    await begun.run();
+
+    const content = workspace.readFile(project.id, DECISIONS_PATH);
+    expect(content).toContain("用本地存储");
+  });
+
+  it("set_preference persists via PreferenceStore", async () => {
+    const { project } = createProject(
+      {
+        ownerUserId: "demo",
+        requirement: "做一个空页面",
+        mode: "engineer",
+      },
+      workspace,
+    );
+    const preferences = createPreferenceStore({ dataRoot });
+
+    const begun = beginEngineerTurn(
+      {
+        ownerUserId: "demo",
+        projectId: project.id,
+        action: "continue",
+      },
+      {
+        workspace,
+        preferences,
+        preview: mockPreview(),
+        llm: llmFromScript([
+          [
+            {
+              type: "tool_calls",
+              toolCalls: [
+                {
+                  id: "p1",
+                  type: "function",
+                  function: {
+                    name: "set_preference",
+                    arguments: JSON.stringify({
+                      key: "ui_language",
+                      value: "zh",
+                    }),
+                  },
+                },
+              ],
+            },
+            { type: "finished", finishReason: "tool_calls" },
+          ],
+          [
+            { type: "content_delta", text: "已保存偏好" },
+            { type: "finished", finishReason: "stop" },
+          ],
+        ]),
+        agent: createCoderAgent({ systemPrompt: "test" }),
+        model: "test-model",
+        maxToolRounds: 8,
+      },
+    );
+    expect(begun.ok).toBe(true);
+    if (!begun.ok) return;
+    await begun.run();
+
+    expect(preferences.getPreferences("demo").ui_language).toBe("zh");
   });
 });

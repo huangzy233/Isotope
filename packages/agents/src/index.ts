@@ -3,6 +3,7 @@ export {
   CODER_TOOLS,
   createCoderAgent,
   type CoderAgent,
+  type CoderToolPort,
   type WorkspaceToolPort,
 } from "./coder/index.js";
 export {

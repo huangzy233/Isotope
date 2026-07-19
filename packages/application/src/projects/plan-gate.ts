@@ -7,13 +7,12 @@ export function isPlanClarifyGateOpen(p: {
   return p.planEnabled && !p.planConfirmed;
 }
 
-export function createPlanGatedWritePort(
+export function createPlanGatedWritePort<T extends WorkspaceToolPort>(
   project: { planEnabled: boolean; planConfirmed: boolean },
-  port: WorkspaceToolPort,
-): WorkspaceToolPort {
+  port: T,
+): T {
   return {
-    listFiles: (relativeDir) => port.listFiles(relativeDir),
-    readFile: (relativePath) => port.readFile(relativePath),
+    ...port,
     writeFile: (relativePath, content) => {
       if (isPlanClarifyGateOpen(project)) {
         throw new Error("需求未确认，禁止改码");
