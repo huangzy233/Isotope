@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { Composer } from "@/components/composer";
 import { ComposerModeChips } from "@/components/composer-mode-chips";
 import { ComposerModeMenu } from "@/components/composer-mode-menu";
+import { Button } from "@/components/ui/button";
+import { HOME_QUICK_STARTS } from "@/lib/home-quick-starts";
 
 export function HomeShell() {
   const router = useRouter();
@@ -55,9 +57,9 @@ export function HomeShell() {
 
   return (
     <div className="mx-auto w-full max-w-3xl px-6 py-8">
-      <div className="space-y-6">
-        <section className="space-y-1">
-          <h1 className="text-xl font-semibold tracking-tight text-foreground">
+      <div className="space-y-8">
+        <section className="space-y-2 pt-2">
+          <h1 className="text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
             从一句话开始构建
           </h1>
           <p className="text-sm text-muted-foreground">
@@ -97,6 +99,24 @@ export function HomeShell() {
             </p>
           ) : null}
         </div>
+
+        <section className="space-y-3">
+          <h2 className="text-sm font-semibold text-foreground">快捷开始</h2>
+          <div className="flex flex-wrap gap-2">
+            {HOME_QUICK_STARTS.map((item) => (
+              <Button
+                key={item.id}
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={submitting}
+                onClick={() => setRequirement(item.prompt)}
+              >
+                {item.label}
+              </Button>
+            ))}
+          </div>
+        </section>
       </div>
     </div>
   );

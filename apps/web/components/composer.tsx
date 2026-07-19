@@ -37,7 +37,7 @@ export function Composer({
         onChange={(event) => onChange(event.target.value)}
         placeholder={placeholder}
         disabled={isDisabled}
-        className="min-h-24 border-0 shadow-none outline-none focus-visible:border-transparent focus-visible:ring-0 focus-visible:ring-offset-0"
+        className="min-h-32 border-0 shadow-none outline-none focus-visible:border-transparent focus-visible:ring-0 focus-visible:ring-offset-0"
       />
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex min-h-9 items-center gap-2">{toolbar}</div>
