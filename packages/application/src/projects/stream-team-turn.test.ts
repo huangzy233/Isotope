@@ -51,7 +51,7 @@ function mockPreview(
 function llmFromScript(rounds: LlmStreamEvent[][]): LlmClient {
   let i = 0;
   return {
-    async *complete() {
+    async *complete(_input) {
       const events = rounds[i++] ?? [
         { type: "finished", finishReason: "stop" } as const,
       ];
@@ -66,7 +66,7 @@ function llmWithDelay(
 ): LlmClient {
   let i = 0;
   return {
-    async *complete() {
+    async *complete(_input) {
       await delay(delayMs);
       const events = rounds[i++] ?? [
         { type: "finished", finishReason: "stop" } as const,
@@ -86,8 +86,11 @@ function teamDeps(
     preview,
     llm,
     leader: createLeaderAgent({ systemPrompt: "mike-test" }),
-    leaderSummaryPrompt: "用一句话总结已完成的任务，不要调用工具。",
+    leaderModel: "test-model",
+    leaderSummary: createLeaderAgent({ systemPrompt: "sum", tools: [] }),
+    leaderSummaryModel: "test-model",
     coder: createCoderAgent({ systemPrompt: "alex-test" }),
+    coderModel: "test-model",
     bus: createTaskEventBus(),
     maxToolRounds: 8,
   };
@@ -326,7 +329,7 @@ describe("beginTeamTurn", () => {
 
     let round = 0;
     const llm: LlmClient = {
-      async *complete() {
+      async *complete(_input) {
         round += 1;
         if (round === 1) {
           yield {
@@ -402,7 +405,7 @@ describe("beginTeamTurn", () => {
         action: "continue",
       },
       teamDeps(workspace, {
-        async *complete() {
+        async *complete(_input) {
           throw new Error("mike boom");
         },
       }),
@@ -644,7 +647,7 @@ describe("beginTeamTurn", () => {
     workspace.updateTask(task.id, { lastProgressAt: stuckAt });
 
     const deps = teamDeps(workspace, {
-      async *complete() {
+      async *complete(_input) {
         throw new Error("alex boom");
       },
     });

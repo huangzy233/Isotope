@@ -60,9 +60,12 @@ export type TeamTurnDeps = {
   preview: PreviewService;
   llm: LlmClient;
   leader: LeaderAgent;
-  /** Mike 收尾总结用 system prompt（无工具）；外置 prompts/leader/mike-summary.v1.md */
-  leaderSummaryPrompt: string;
+  leaderModel: string;
+  /** Mike 收尾总结用 agent（tools 可为空）；由装配注入 */
+  leaderSummary: LeaderAgent;
+  leaderSummaryModel: string;
   coder: CoderAgent;
+  coderModel: string;
   bus: TaskEventBus;
   maxToolRounds: number;
 };
@@ -269,6 +272,7 @@ async function runAlexForTask(input: {
   try {
     const result = await runTurn({
       llm: deps.llm,
+      model: deps.coderModel,
       agent: deps.coder,
       port: filePort,
       history,
@@ -364,18 +368,11 @@ async function maybeRunMikeSummary(input: {
     checkpoint,
   );
 
-  const summaryAgent = {
-    displayName: "Mike" as const,
-    systemPrompt: deps.leaderSummaryPrompt,
-    tools: [] as LeaderAgent["tools"],
-    executeTool: () =>
-      ({ ok: false as const, error: "总结回合不可调用工具" }),
-  };
-
   try {
     const result = await runTurn({
       llm: deps.llm,
-      agent: summaryAgent,
+      model: deps.leaderSummaryModel,
+      agent: deps.leaderSummary,
       port: {},
       history: historyForProject(deps.workspace, projectId),
       maxToolRounds: Math.min(2, deps.maxToolRounds),
@@ -508,6 +505,7 @@ export function beginTeamTurn(
 
         const mikeResult = await runTurn({
           llm: deps.llm,
+          model: deps.leaderModel,
           agent: deps.leader,
           port: taskPort,
           history: historyForProject(deps.workspace, input.projectId),

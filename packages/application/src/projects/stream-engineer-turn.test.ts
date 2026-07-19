@@ -48,7 +48,7 @@ function mockPreview(
 function llmFromScript(rounds: LlmStreamEvent[][]): LlmClient {
   let i = 0;
   return {
-    async *complete() {
+    async *complete(_input) {
       const events = rounds[i++] ?? [
         { type: "finished", finishReason: "stop" } as const,
       ];
@@ -63,7 +63,7 @@ function llmWithDelay(
 ): LlmClient {
   let i = 0;
   return {
-    async *complete() {
+    async *complete(_input) {
       await delay(delayMs);
       const events = rounds[i++] ?? [
         { type: "finished", finishReason: "stop" } as const,
@@ -146,6 +146,7 @@ describe("beginEngineerTurn", () => {
           ],
         ]),
         agent: createCoderAgent({ systemPrompt: "test" }),
+        model: "test-model",
         maxToolRounds: 8,
       },
     );
@@ -240,6 +241,7 @@ describe("beginEngineerTurn", () => {
         preview: mockPreview(),
         llm,
         agent: createCoderAgent({ systemPrompt: "test" }),
+        model: "test-model",
         maxToolRounds: 8,
       },
     );
@@ -288,6 +290,7 @@ describe("beginEngineerTurn", () => {
           ],
         ]),
         agent: createCoderAgent({ systemPrompt: "test" }),
+        model: "test-model",
         maxToolRounds: 8,
       },
     );
@@ -337,6 +340,7 @@ describe("beginEngineerTurn", () => {
           ],
         ]),
         agent: createCoderAgent({ systemPrompt: "test" }),
+        model: "test-model",
         maxToolRounds: 8,
       },
     );
@@ -378,6 +382,7 @@ describe("beginEngineerTurn", () => {
         50,
       ),
       agent: createCoderAgent({ systemPrompt: "test" }),
+      model: "test-model",
       maxToolRounds: 8,
     };
 
@@ -428,11 +433,12 @@ describe("beginEngineerTurn", () => {
         workspace,
         preview,
         llm: {
-          async *complete() {
+          async *complete(_input) {
             throw new Error("upstream down");
           },
         },
         agent: createCoderAgent({ systemPrompt: "test" }),
+        model: "test-model",
         maxToolRounds: 8,
       },
     );
@@ -471,11 +477,12 @@ describe("beginEngineerTurn", () => {
         workspace,
         preview: mockPreview(),
         llm: {
-          async *complete() {
+          async *complete(_input) {
             throw new Error("Invalid state: Controller is already closed");
           },
         },
         agent: createCoderAgent({ systemPrompt: "test" }),
+        model: "test-model",
         maxToolRounds: 8,
       },
     );
@@ -518,6 +525,7 @@ describe("beginEngineerTurn", () => {
           30,
         ),
         agent: createCoderAgent({ systemPrompt: "test" }),
+        model: "test-model",
         maxToolRounds: 8,
       },
     );
@@ -560,7 +568,7 @@ describe("beginEngineerTurn", () => {
         workspace,
         preview: mockPreview(),
         llm: {
-          async *complete() {
+          async *complete(_input) {
             if (!toolStarted) {
               toolStarted = true;
               yield {
@@ -585,6 +593,7 @@ describe("beginEngineerTurn", () => {
           },
         },
         agent: createCoderAgent({ systemPrompt: "test" }),
+        model: "test-model",
         maxToolRounds: 8,
       },
     );
@@ -654,6 +663,7 @@ describe("beginEngineerTurn", () => {
           ],
         ]),
         agent: createCoderAgent({ systemPrompt: "test" }),
+        model: "test-model",
         maxToolRounds: 8,
       },
     );
@@ -732,6 +742,7 @@ describe("beginEngineerTurn", () => {
         preview: mockPreview(),
         llm,
         agent: createCoderAgent({ systemPrompt: "test" }),
+        model: "test-model",
         maxToolRounds: 8,
       },
     );
@@ -779,6 +790,7 @@ describe("beginEngineerTurn", () => {
         preview: mockPreview(),
         llm: llmFromScript([]),
         agent: createCoderAgent({ systemPrompt: "test" }),
+        model: "test-model",
         maxToolRounds: 8,
       },
     );
@@ -817,13 +829,14 @@ describe("beginEngineerTurn", () => {
         workspace,
         preview: mockPreview(),
         llm: {
-          async *complete() {
+          async *complete(_input) {
             yield { type: "content_delta" as const, text: "改完" };
             yield { type: "finished" as const, finishReason: "stop" };
             await gate;
           },
         },
         agent: createCoderAgent({ systemPrompt: "test" }),
+        model: "test-model",
         maxToolRounds: 8,
       },
     );

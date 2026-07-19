@@ -22,7 +22,7 @@ const templatePath = path.resolve(
 function llmFromScript(rounds: LlmStreamEvent[][]): LlmClient {
   let i = 0;
   return {
-    async *complete() {
+    async *complete(_input) {
       const events = rounds[i++] ?? [
         { type: "finished", finishReason: "stop" } as const,
       ];
@@ -94,6 +94,7 @@ describe("beginPlanTurn", () => {
           ],
         ]),
         agent: createRequirementAgent({ systemPrompt: "test" }),
+        model: "test-model",
         maxToolRounds: 8,
       },
     );
@@ -170,6 +171,7 @@ describe("beginPlanTurn", () => {
           ],
         ]),
         agent: createRequirementAgent({ systemPrompt: "test" }),
+        model: "test-model",
         maxToolRounds: 8,
       },
     );
@@ -248,6 +250,7 @@ describe("beginPlanTurn", () => {
           ],
         ]),
         agent: createRequirementAgent({ systemPrompt: "test" }),
+        model: "test-model",
         maxToolRounds: 8,
       },
     );
@@ -310,6 +313,7 @@ describe("beginPlanTurn", () => {
           ],
         ]),
         agent: createRequirementAgent({ systemPrompt: "test" }),
+        model: "test-model",
         maxToolRounds: 8,
       },
     );

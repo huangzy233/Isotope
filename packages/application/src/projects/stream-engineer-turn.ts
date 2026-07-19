@@ -65,6 +65,7 @@ export type EngineerTurnDeps = {
   preview: PreviewService;
   llm: LlmClient;
   agent: CoderAgent;
+  model: string;
   maxToolRounds: number;
 };
 
@@ -184,6 +185,7 @@ export function beginEngineerTurn(
         try {
           const result = await runTurn({
             llm: deps.llm,
+            model: deps.model,
             agent: deps.agent,
             port,
             history,

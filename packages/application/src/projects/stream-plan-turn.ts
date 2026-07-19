@@ -52,6 +52,7 @@ export type PlanTurnDeps = {
   workspace: WorkspaceStore;
   llm: LlmClient;
   agent: RequirementAgent;
+  model: string;
   maxToolRounds: number;
 };
 
@@ -170,6 +171,7 @@ export function beginPlanTurn(
         try {
           const result = await runTurn({
             llm: deps.llm,
+            model: deps.model,
             agent: deps.agent,
             port: confirmPort,
             history,

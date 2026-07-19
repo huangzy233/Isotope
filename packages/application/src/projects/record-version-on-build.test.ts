@@ -100,7 +100,7 @@ describe("record version on build", () => {
     workspace.upsertPendingVersionIntent(project.id);
 
     const llm: LlmClient = {
-      async *complete() {
+      async *complete(_input) {
         yield { type: "content_delta", text: "更新了首页标题文案" };
         yield { type: "finished", finishReason: "stop" };
       },
@@ -110,7 +110,7 @@ describe("record version on build", () => {
       { projectId: project.id, ok: true, revision: "r1", error: null },
       workspace,
       llm,
-      { promptTemplate: PROMPT },
+      { promptTemplate: PROMPT, model: "test-model" },
     );
 
     expect(workspace.takePendingVersionIntent(project.id)).toBe(false);
@@ -133,7 +133,7 @@ describe("record version on build", () => {
       workspace,
     );
     const llm: LlmClient = {
-      async *complete() {
+      async *complete(_input) {
         yield { type: "content_delta", text: "不应出现" };
       },
     };
@@ -141,7 +141,7 @@ describe("record version on build", () => {
       { projectId: project.id, ok: true, revision: "r1", error: null },
       workspace,
       llm,
-      { promptTemplate: PROMPT },
+      { promptTemplate: PROMPT, model: "test-model" },
     );
     expect(workspace.listVersions(project.id)).toEqual([]);
   });
@@ -153,7 +153,7 @@ describe("record version on build", () => {
     );
     workspace.upsertPendingVersionIntent(project.id);
     const llm: LlmClient = {
-      async *complete() {
+      async *complete(_input) {
         yield { type: "content_delta", text: "不应出现" };
       },
     };
@@ -161,7 +161,7 @@ describe("record version on build", () => {
       { projectId: project.id, ok: false, revision: null, error: "boom" },
       workspace,
       llm,
-      { promptTemplate: PROMPT },
+      { promptTemplate: PROMPT, model: "test-model" },
     );
     expect(workspace.takePendingVersionIntent(project.id)).toBe(false);
     expect(workspace.listVersions(project.id)).toEqual([]);
@@ -180,7 +180,7 @@ describe("record version on build", () => {
     });
     workspace.upsertPendingVersionIntent(project.id);
     const llm: LlmClient = {
-      async *complete() {
+      async *complete(_input) {
         throw new Error("timeout");
       },
     };
@@ -188,7 +188,7 @@ describe("record version on build", () => {
       { projectId: project.id, ok: true, revision: "r2", error: null },
       workspace,
       llm,
-      { promptTemplate: PROMPT },
+      { promptTemplate: PROMPT, model: "test-model" },
     );
     const versions = workspace.listVersions(project.id);
     expect(versions).toHaveLength(1);

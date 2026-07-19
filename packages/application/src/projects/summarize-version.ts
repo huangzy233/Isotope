@@ -31,12 +31,14 @@ export async function summarizeVersionChange(
   context: string,
   llm: LlmClient,
   promptTemplate: string,
+  model: string,
 ): Promise<string> {
   const fallback = truncateSummary(context);
   try {
     const prompt = promptTemplate.replaceAll("{{context}}", context);
     let text = "";
     for await (const ev of llm.complete({
+      model,
       messages: [{ role: "user", content: prompt }],
     })) {
       if (ev.type === "content_delta") {

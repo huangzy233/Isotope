@@ -14,7 +14,7 @@ export async function handlePreviewBuildComplete(
   },
   workspace: WorkspaceStore,
   llm: LlmClient,
-  opts: { promptTemplate: string },
+  opts: { promptTemplate: string; model: string },
 ): Promise<void> {
   const hadPending = workspace.takePendingVersionIntent(input.projectId);
   if (!hadPending) return;
@@ -25,6 +25,7 @@ export async function handlePreviewBuildComplete(
     context,
     llm,
     opts.promptTemplate,
+    opts.model,
   );
   const version = workspace.recordVersion({
     projectId: input.projectId,
