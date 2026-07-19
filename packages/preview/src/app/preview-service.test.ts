@@ -29,6 +29,7 @@ describe("createPreviewService", () => {
         builds += 1;
         fs.writeFileSync(path.join(buildDir, "index.html"), "<html></html>");
       },
+      typecheck: async () => ({ ok: true, log: "" }),
     };
     const preview = createPreviewService({
       resolvePaths: (id) =>
@@ -49,6 +50,7 @@ describe("createPreviewService", () => {
         const { SandboxBuildError } = await import("@isotope/sandbox");
         throw new SandboxBuildError("构建失败", "boom");
       },
+      typecheck: async () => ({ ok: true, log: "" }),
     };
     const preview = createPreviewService({
       resolvePaths: () => ({ workspaceDir, buildDir }),
@@ -60,7 +62,10 @@ describe("createPreviewService", () => {
   });
 
   it("readAsset rejects path escape and non-ready", () => {
-    const sandbox: Sandbox = { async build() {} };
+    const sandbox: Sandbox = {
+      async build() {},
+      typecheck: async () => ({ ok: true, log: "" }),
+    };
     const preview = createPreviewService({
       resolvePaths: () => ({ workspaceDir, buildDir }),
       sandbox,
@@ -86,6 +91,7 @@ describe("createPreviewService", () => {
       async build() {
         fs.writeFileSync(path.join(buildDir, "index.html"), "<html></html>");
       },
+      typecheck: async () => ({ ok: true, log: "" }),
     };
     const okPreview = createPreviewService({
       resolvePaths: () => ({ workspaceDir, buildDir }),
@@ -111,6 +117,7 @@ describe("createPreviewService", () => {
         const { SandboxBuildError } = await import("@isotope/sandbox");
         throw new SandboxBuildError("构建失败", "boom");
       },
+      typecheck: async () => ({ ok: true, log: "" }),
     };
     const failPreview = createPreviewService({
       resolvePaths: () => ({
@@ -140,6 +147,7 @@ describe("createPreviewService", () => {
         builds += 1;
         fs.writeFileSync(path.join(buildDir, "index.html"), "<html></html>");
       },
+      typecheck: async () => ({ ok: true, log: "" }),
     };
     const preview = createPreviewService({
       resolvePaths: (id) =>

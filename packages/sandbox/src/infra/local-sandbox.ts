@@ -14,6 +14,7 @@ function runNpm(
   cwd: string,
   timeoutMs: number,
   logTailChars = 2048,
+  timeoutMessage = "构建超时",
 ): Promise<{ code: number; log: string }> {
   return new Promise((resolve, reject) => {
     const child = spawn("npm", args, {
@@ -29,7 +30,7 @@ function runNpm(
     child.stderr?.on("data", append);
     const timer = setTimeout(() => {
       child.kill("SIGKILL");
-      reject(new SandboxBuildError("构建超时", log));
+      reject(new SandboxBuildError(timeoutMessage, log));
     }, timeoutMs);
     child.on("error", (err) => {
       clearTimeout(timer);
@@ -113,6 +114,7 @@ export function createLocalSandbox(): Sandbox {
           input.workspaceDir,
           timeoutMs,
           CHECK_LOG_TAIL_CHARS,
+          "类型检查超时",
         );
         if (install.code !== 0) {
           throw new SandboxBuildError("npm install 失败", install.log);
@@ -123,6 +125,7 @@ export function createLocalSandbox(): Sandbox {
         input.workspaceDir,
         timeoutMs,
         CHECK_LOG_TAIL_CHARS,
+        "类型检查超时",
       );
       return { ok: checked.code === 0, log: checked.log };
     },
