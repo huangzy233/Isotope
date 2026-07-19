@@ -5,6 +5,7 @@ export { createProject } from "./projects/create-project.js";
 export { listProjects } from "./projects/list-projects.js";
 export { getProject } from "./projects/get-project.js";
 export { listMessages } from "./projects/list-messages.js";
+export { listProjectVersions } from "./projects/list-project-versions.js";
 export { appendMessage } from "./projects/append-message.js";
 export { deleteProject } from "./projects/delete-project.js";
 export { getPreviewStatus } from "./projects/get-preview-status.js";
