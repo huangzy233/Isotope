@@ -1,5 +1,10 @@
 import { runTurn } from "@isotope/agent-runtime";
-import type { CoderAgent, LeaderAgent, TaskToolPort } from "@isotope/agents";
+import type {
+  CoderAgent,
+  LeaderAgent,
+  QaAgent,
+  TaskToolPort,
+} from "@isotope/agents";
 import type { LlmClient } from "@isotope/llm";
 import { isPreferenceKey, type PreferenceStore } from "@isotope/memory";
 import type { PreviewService } from "@isotope/preview";
@@ -19,6 +24,7 @@ import {
   isPlanClarifyGateOpen,
 } from "./plan-gate.js";
 import { ASSISTANT_PLACEHOLDER } from "./placeholder.js";
+import { runQualityLoop } from "./run-quality-loop.js";
 import type { TaskEventBus } from "./task-event-bus.js";
 import type { EngineerTurnInput } from "./stream-engineer-turn.js";
 import { isTransportDisconnectError } from "./transport-error.js";
@@ -28,9 +34,13 @@ import {
   publishTurnEvent,
 } from "./turn-hub.js";
 import { releaseTurnLock, tryAcquireTurnLock } from "./turn-lock.js";
+import {
+  createWritePolicyPort,
+  type WritePolicy,
+} from "./write-policy.js";
 
 export type TeamTurnEvent =
-  | { type: "speaker"; agentName: "Mike" | "Alex"; messageId: string }
+  | { type: "speaker"; agentName: "Mike" | "Alex" | "QA"; messageId: string }
   | { type: "status"; phase: "thinking" | "running" | "streaming" }
   | { type: "thinking"; text: string }
   | {
@@ -72,7 +82,15 @@ export type TeamTurnDeps = {
   coderModel: string;
   bus: TaskEventBus;
   maxToolRounds: number;
+  writePolicy: WritePolicy;
+  qa: QaAgent;
+  qaModel: string;
+  runTypecheck: (projectId: string) => Promise<{ ok: boolean; log: string }>;
 };
+
+function changedPathsBlock(paths: string[]): string {
+  return `【本轮变更】\n${paths.map((p) => `- ${p}`).join("\n")}`;
+}
 
 const OPEN_TASK_STATUSES = new Set<TaskStatus>([
   "pending",
@@ -253,6 +271,23 @@ function failTask(
   }
 }
 
+function alexFilePort(
+  deps: TeamTurnDeps,
+  projectId: string,
+  ownerUserId: string,
+) {
+  const basePort = {
+    listFiles: (dir?: string) => deps.workspace.listFiles(projectId, dir),
+    readFile: (p: string) => deps.workspace.readFile(projectId, p),
+    writeFile: (p: string, c: string) =>
+      deps.workspace.writeFile(projectId, p, c),
+    ...memoryToolMethods(deps, projectId, ownerUserId),
+  };
+  const withAcl = createWritePolicyPort(deps.writePolicy, basePort);
+  const project = deps.workspace.getProject(projectId);
+  return project ? createPlanGatedWritePort(project, withAcl) : withAcl;
+}
+
 async function runAlexForTask(input: {
   projectId: string;
   ownerUserId: string;
@@ -260,7 +295,12 @@ async function runAlexForTask(input: {
   deps: TeamTurnDeps;
   publish?: (event: TeamTurnEvent) => void;
   extraUserContent?: string;
-}): Promise<{ messageId: string; filesChanged: boolean; previewEnqueued: boolean }> {
+}): Promise<{
+  messageId: string;
+  filesChanged: boolean;
+  writtenPaths: string[];
+  assistantText: string;
+}> {
   const { projectId, ownerUserId, task, deps, publish, extraUserContent } = input;
   const prevStatus = task.status;
   const running = deps.workspace.updateTask(task.id, { status: "running" });
@@ -296,24 +336,12 @@ async function runAlexForTask(input: {
     history.push({ role: "user", content: extraUserContent });
   }
 
-  const project = deps.workspace.getProject(projectId);
-  const basePort = {
-    listFiles: (dir?: string) => deps.workspace.listFiles(projectId, dir),
-    readFile: (p: string) => deps.workspace.readFile(projectId, p),
-    writeFile: (p: string, c: string) =>
-      deps.workspace.writeFile(projectId, p, c),
-    ...memoryToolMethods(deps, projectId, ownerUserId),
-  };
-  const filePort = project
-    ? createPlanGatedWritePort(project, basePort)
-    : basePort;
-
   try {
     const result = await runTurn({
       llm: deps.llm,
       model: deps.coderModel,
       agent: deps.coder,
-      port: filePort,
+      port: alexFilePort(deps, projectId, ownerUserId),
       history,
       maxToolRounds: deps.maxToolRounds,
       ...callbacks,
@@ -338,24 +366,11 @@ async function runAlexForTask(input: {
       }
     }
 
-    let previewEnqueued = false;
-    if (result.filesChanged) {
-      const latest = deps.workspace.getProject(projectId) ?? project;
-      if (!latest || !isPlanClarifyGateOpen(latest)) {
-        enqueuePreviewBuild(
-          { ownerUserId, projectId },
-          deps.workspace,
-          deps.preview,
-          { recordVersionIntent: true },
-        );
-        previewEnqueued = true;
-      }
-    }
-
     return {
       messageId: alexMsg.id,
       filesChanged: result.filesChanged,
-      previewEnqueued,
+      writtenPaths: result.writtenPaths,
+      assistantText: text,
     };
   } catch (err) {
     if (isTransportDisconnectError(err)) {
@@ -372,6 +387,142 @@ async function runAlexForTask(input: {
     failTask(deps, task.id, msg, publish);
     throw err;
   }
+}
+
+async function runQualityAfterAlex(input: {
+  projectId: string;
+  ownerUserId: string;
+  deps: TeamTurnDeps;
+  publish?: (event: TeamTurnEvent) => void;
+  initial: { writtenPaths: string[]; assistantText: string };
+}): Promise<{ passed: boolean; previewEnqueued: boolean }> {
+  const { projectId, ownerUserId, deps, publish, initial } = input;
+  const noopPublish = () => {};
+  const emit = publish ?? noopPublish;
+
+  const quality = await runQualityLoop({
+    projectId,
+    ownerUserId,
+    initial,
+    runQa: async (changedPaths) => {
+      const qaMsg = deps.workspace.appendMessage({
+        projectId,
+        role: "assistant",
+        content: ASSISTANT_PLACEHOLDER,
+        agentName: "QA",
+      });
+      emit({
+        type: "speaker",
+        agentName: "QA",
+        messageId: qaMsg.id,
+      });
+
+      const qaProcess: MessageProcess = { steps: [] };
+      const qaCheckpoint = () =>
+        checkpointProcess(deps.workspace, qaMsg.id, qaProcess);
+      const qaCallbacks = trackProcess(qaProcess, emit, qaCheckpoint);
+
+      let checkRan = false;
+      let checkOk = false;
+      const qaPort = {
+        listFiles: (dir?: string) => deps.workspace.listFiles(projectId, dir),
+        readFile: (p: string) => deps.workspace.readFile(projectId, p),
+        runCheck: async () => {
+          checkRan = true;
+          const r = await deps.runTypecheck(projectId);
+          checkOk = r.ok;
+          return r;
+        },
+      };
+
+      const qaResult = await runTurn({
+        llm: deps.llm,
+        model: deps.qaModel,
+        agent: deps.qa,
+        port: qaPort,
+        history: [
+          ...historyForProject(deps, projectId, ownerUserId),
+          { role: "user" as const, content: changedPathsBlock(changedPaths) },
+        ],
+        maxToolRounds: deps.maxToolRounds,
+        ...qaCallbacks,
+      });
+
+      const qaText = qaResult.assistantText || "（无质检报告）";
+      deps.workspace.updateMessage(qaMsg.id, {
+        content: qaText,
+        process: qaResult.process,
+      });
+
+      return {
+        assistantText: qaText,
+        checkRan,
+        checkOk,
+      };
+    },
+    runAlexRepair: async (extraUserContent) => {
+      const repairMsg = deps.workspace.appendMessage({
+        projectId,
+        role: "assistant",
+        content: ASSISTANT_PLACEHOLDER,
+        agentName: "Alex",
+      });
+      emit({
+        type: "speaker",
+        agentName: "Alex",
+        messageId: repairMsg.id,
+      });
+
+      const repairProcess: MessageProcess = { steps: [] };
+      const repairCheckpoint = () =>
+        checkpointProcess(deps.workspace, repairMsg.id, repairProcess);
+      const repairCallbacks = trackProcess(
+        repairProcess,
+        emit,
+        repairCheckpoint,
+      );
+
+      const repairResult = await runTurn({
+        llm: deps.llm,
+        model: deps.coderModel,
+        agent: deps.coder,
+        port: alexFilePort(deps, projectId, ownerUserId),
+        history: [
+          ...historyForProject(deps, projectId, ownerUserId),
+          { role: "user" as const, content: extraUserContent },
+        ],
+        maxToolRounds: deps.maxToolRounds,
+        ...repairCallbacks,
+      });
+
+      const repairText = repairResult.assistantText || "（无回复内容）";
+      deps.workspace.updateMessage(repairMsg.id, {
+        content: repairText,
+        process: repairResult.process,
+      });
+
+      return {
+        writtenPaths: repairResult.writtenPaths,
+        assistantText: repairText,
+      };
+    },
+  });
+
+  let previewEnqueued = false;
+  if (quality.shouldEnqueuePreview) {
+    const latest = deps.workspace.getProject(projectId);
+    if (!latest || !isPlanClarifyGateOpen(latest)) {
+      enqueuePreviewBuild(
+        { ownerUserId, projectId },
+        deps.workspace,
+        deps.preview,
+        { recordVersionIntent: true },
+      );
+      previewEnqueued = true;
+    }
+  }
+
+  return { passed: quality.passed, previewEnqueued };
 }
 
 /** 项目内无进行中任务时，追加一条 Mike 收尾总结（旁路、无工具）。 */
@@ -593,18 +744,32 @@ export function beginTeamTurn(
           publish,
         });
 
-        const summaryMessageId = await maybeRunMikeSummary({
+        const { passed, previewEnqueued } = await runQualityAfterAlex({
           projectId: input.projectId,
           ownerUserId: input.ownerUserId,
           deps,
           publish,
+          initial: {
+            writtenPaths: alexOutcome.writtenPaths,
+            assistantText: alexOutcome.assistantText,
+          },
         });
+
+        let summaryMessageId: string | null = null;
+        if (passed) {
+          summaryMessageId = await maybeRunMikeSummary({
+            projectId: input.projectId,
+            ownerUserId: input.ownerUserId,
+            deps,
+            publish,
+          });
+        }
 
         publish({
           type: "done",
           messageId: summaryMessageId ?? alexOutcome.messageId,
           filesChanged: alexOutcome.filesChanged,
-          previewEnqueued: alexOutcome.previewEnqueued,
+          previewEnqueued,
           taskId: createdTaskId,
         });
       } catch (err) {
@@ -664,18 +829,29 @@ export async function retryStuckAssignedTask(
     if (!project) {
       return { ok: false, error: "not_found" };
     }
-    await runAlexForTask({
+    const alexOutcome = await runAlexForTask({
       projectId: task.projectId,
       ownerUserId: project.ownerUserId,
       task: latest,
       deps,
       extraUserContent: `请执行任务：${latest.title}`,
     });
-    await maybeRunMikeSummary({
+    const { passed } = await runQualityAfterAlex({
       projectId: task.projectId,
       ownerUserId: project.ownerUserId,
       deps,
+      initial: {
+        writtenPaths: alexOutcome.writtenPaths,
+        assistantText: alexOutcome.assistantText,
+      },
     });
+    if (passed) {
+      await maybeRunMikeSummary({
+        projectId: task.projectId,
+        ownerUserId: project.ownerUserId,
+        deps,
+      });
+    }
     return { ok: true };
   } catch (err) {
     const message = err instanceof Error ? err.message : "未知错误";

@@ -3,7 +3,11 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createCoderAgent, createLeaderAgent } from "@isotope/agents";
+import {
+  createCoderAgent,
+  createLeaderAgent,
+  createQaAgent,
+} from "@isotope/agents";
 import type { LlmClient, LlmStreamEvent } from "@isotope/llm";
 import type { PreferenceStore } from "@isotope/memory";
 import type { PreviewService, PreviewStatusSnapshot } from "@isotope/preview";
@@ -83,10 +87,70 @@ function llmWithDelay(
   };
 }
 
+const DEFAULT_WRITE_POLICY = { allow: ["src/**", "index.html"] };
+
+function teamExtras(overrides: {
+  runTypecheck?: (projectId: string) => Promise<{ ok: boolean; log: string }>;
+} = {}) {
+  return {
+    writePolicy: DEFAULT_WRITE_POLICY,
+    qa: createQaAgent({ systemPrompt: "test-qa" }),
+    qaModel: "test-qa-model",
+    runTypecheck:
+      overrides.runTypecheck ??
+      (async () => ({ ok: true as const, log: "" })),
+  };
+}
+
+function isQaTools(
+  tools: Array<{ function: { name: string } }> | undefined,
+): boolean {
+  return !!tools?.some((t) => t.function.name === "run_check");
+}
+
+/** QA rounds auto-call run_check then emit PASS/FAIL report text. */
+function withAutoQa(
+  base: LlmClient,
+  outcome: "pass" | "fail",
+): LlmClient {
+  let awaitingReport = false;
+  const report =
+    outcome === "pass"
+      ? "【质检结果】PASS\n检查：typecheck\n问题：无"
+      : "【质检结果】FAIL\n检查：typecheck\n问题：still broken";
+  return {
+    async *complete(input) {
+      if (isQaTools(input.tools)) {
+        if (!awaitingReport) {
+          awaitingReport = true;
+          yield {
+            type: "tool_calls" as const,
+            toolCalls: [
+              {
+                id: "qa-check",
+                type: "function" as const,
+                function: { name: "run_check", arguments: "{}" },
+              },
+            ],
+          };
+          yield { type: "finished" as const, finishReason: "tool_calls" };
+          return;
+        }
+        awaitingReport = false;
+        yield { type: "content_delta" as const, text: report };
+        yield { type: "finished" as const, finishReason: "stop" };
+        return;
+      }
+      yield* base.complete(input);
+    },
+  };
+}
+
 function teamDeps(
   workspace: ReturnType<typeof createFsSqliteWorkspace>,
   llm: LlmClient,
   preview: PreviewService = mockPreview(),
+  extras: ReturnType<typeof teamExtras> = teamExtras(),
 ) {
   return {
     workspace,
@@ -101,8 +165,61 @@ function teamDeps(
     coderModel: "test-model",
     bus: createTaskEventBus(),
     maxToolRounds: 8,
+    ...extras,
   };
 }
+
+const mikeAssignRounds: LlmStreamEvent[][] = [
+  [
+    {
+      type: "tool_calls",
+      toolCalls: [
+        {
+          id: "c1",
+          type: "function",
+          function: {
+            name: "create_task",
+            arguments: JSON.stringify({
+              title: "统一文案",
+              assignee: "Alex",
+            }),
+          },
+        },
+      ],
+    },
+    { type: "finished", finishReason: "tool_calls" },
+  ],
+  [
+    { type: "content_delta", text: "已指派给 Alex" },
+    { type: "finished", finishReason: "stop" },
+  ],
+];
+
+const alexWriteRounds: LlmStreamEvent[][] = [
+  [
+    {
+      type: "tool_calls",
+      toolCalls: [
+        {
+          id: "w1",
+          type: "function",
+          function: {
+            name: "write_file",
+            arguments: JSON.stringify({
+              path: "src/App.tsx",
+              content: "export default function App(){return null}",
+            }),
+          },
+        },
+      ],
+    },
+    { type: "finished", finishReason: "tool_calls" },
+  ],
+  [
+    { type: "content_delta", text: "标题已更新" },
+    { type: "finished", finishReason: "stop" },
+  ],
+];
 
 async function runAndCollect(
   projectId: string,
@@ -627,6 +744,133 @@ describe("beginTeamTurn", () => {
       new Date(stuckAt).getTime(),
     );
     releaseTurnLock(project.id);
+  });
+
+  it("QA PASS after Alex writes enqueues preview and may run Mike summary", async () => {
+    const { project, messages: seeded } = createProject(
+      {
+        ownerUserId: "demo",
+        requirement: "统一文案",
+        mode: "team",
+      },
+      workspace,
+    );
+    workspace.updateMessage(seeded.find((m) => m.role === "assistant")!.id, {
+      content: "先前规划",
+    });
+
+    const preview = mockPreview();
+    const rounds: LlmStreamEvent[][] = [
+      ...mikeAssignRounds,
+      ...alexWriteRounds,
+      [
+        { type: "content_delta", text: "本轮任务已全部完成，标题已按要求更新。" },
+        { type: "finished", finishReason: "stop" },
+      ],
+    ];
+
+    const begun = beginTeamTurn(
+      {
+        ownerUserId: "demo",
+        projectId: project.id,
+        action: "send",
+        content: "请改首页标题",
+      },
+      teamDeps(workspace, withAutoQa(llmFromScript(rounds), "pass"), preview),
+    );
+
+    expect(begun.ok).toBe(true);
+    if (!begun.ok) return;
+    const events = await runAndCollect(project.id, begun.run);
+
+    expect(preview.enqueueBuild).toHaveBeenCalledTimes(1);
+    expect(
+      events.some(
+        (e) =>
+          e.type === "done" &&
+          e.filesChanged === true &&
+          e.previewEnqueued === true,
+      ),
+    ).toBe(true);
+    expect(
+      events.some((e) => e.type === "speaker" && e.agentName === "QA"),
+    ).toBe(true);
+    expect(workspace.listMessages(project.id).at(-1)?.agentName).toBe("Mike");
+    expect(workspace.listMessages(project.id).at(-1)?.content).toBe(
+      "本轮任务已全部完成，标题已按要求更新。",
+    );
+  });
+
+  it("QA FAIL through max repairs skips Mike summary and preview", async () => {
+    const { project, messages: seeded } = createProject(
+      {
+        ownerUserId: "demo",
+        requirement: "统一文案",
+        mode: "team",
+      },
+      workspace,
+    );
+    workspace.updateMessage(seeded.find((m) => m.role === "assistant")!.id, {
+      content: "先前规划",
+    });
+
+    const preview = mockPreview();
+    const rounds: LlmStreamEvent[][] = [
+      ...mikeAssignRounds,
+      ...alexWriteRounds,
+    ];
+
+    const begun = beginTeamTurn(
+      {
+        ownerUserId: "demo",
+        projectId: project.id,
+        action: "send",
+        content: "请改首页标题",
+      },
+      teamDeps(
+        workspace,
+        withAutoQa(llmFromScript(rounds), "fail"),
+        preview,
+        teamExtras({
+          runTypecheck: async () => ({ ok: false, log: "error TS" }),
+        }),
+      ),
+    );
+
+    expect(begun.ok).toBe(true);
+    if (!begun.ok) return;
+    const events = await runAndCollect(project.id, begun.run);
+
+    expect(preview.enqueueBuild).not.toHaveBeenCalled();
+    expect(
+      events.some(
+        (e) =>
+          e.type === "done" &&
+          e.filesChanged === true &&
+          e.previewEnqueued === false,
+      ),
+    ).toBe(true);
+
+    const speakers = events.filter((e) => e.type === "speaker");
+    expect(speakers.some((e) => e.type === "speaker" && e.agentName === "QA")).toBe(
+      true,
+    );
+    expect(speakers.at(-1)).toMatchObject({ agentName: "QA" });
+
+    const after = workspace.listMessages(project.id);
+    expect(after.at(-1)?.agentName).toBe("QA");
+    const mikeMsgs = after.filter((m) => m.agentName === "Mike");
+    expect(mikeMsgs.some((m) => m.content === "已指派给 Alex")).toBe(true);
+    expect(
+      mikeMsgs.every(
+        (m) =>
+          m.content === "先前规划" || m.content === "已指派给 Alex",
+      ),
+    ).toBe(true);
+
+    const qaMessages = after.filter((m) => m.agentName === "QA");
+    expect(qaMessages.length).toBeGreaterThanOrEqual(3);
+    expect(qaMessages.at(-1)?.content).toContain("【质检结果】FAIL");
   });
 
   it("Alex remember_decision appends decisions.md", async () => {
