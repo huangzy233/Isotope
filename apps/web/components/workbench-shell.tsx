@@ -19,6 +19,7 @@ import { PanelHeader } from "@/components/panel-header";
 import { StatusBadge } from "@/components/status-badge";
 import { TaskCard } from "@/components/task-card";
 import { VersionCard } from "@/components/version-card";
+import { VersionHistoryDialog } from "@/components/version-history-dialog";
 import { CheckCircle2, ChevronUp } from "lucide-react";
 import { ToolCallGroup } from "@/components/tool-call-row";
 import { Button } from "@/components/ui/button";
@@ -332,6 +333,7 @@ export function WorkbenchShell({
   const [dragging, setDragging] = useState(false);
   const [preview, setPreview] = useState<PreviewSnapshot | null>(null);
   const [viewerMode, setViewerMode] = useState<ViewerMode>("preview");
+  const [versionsOpen, setVersionsOpen] = useState(false);
   const splitRef = useRef<HTMLDivElement>(null);
   const continuedRef = useRef(false);
   const continueInFlightRef = useRef(false);
@@ -375,6 +377,11 @@ export function WorkbenchShell({
     } catch {
       // ignore storage errors
     }
+  }
+
+  function handleOpenVersionPreview() {
+    setVersionsOpen(false);
+    persistViewerMode("preview");
   }
 
   useEffect(() => {
@@ -1040,7 +1047,26 @@ export function WorkbenchShell({
         <section className="flex min-h-[50vh] w-full min-w-0 flex-col border-b border-border xl:min-h-0 xl:w-[var(--chat-pct)] xl:shrink-0 xl:border-b-0">
           <PanelHeader
             title="对话"
-            trailing={<StatusBadge status={agentStatus} />}
+            trailing={
+              <>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setVersionsOpen(true)}
+                >
+                  版本
+                </Button>
+                <StatusBadge status={agentStatus} />
+              </>
+            }
+          />
+          <VersionHistoryDialog
+            projectId={project.id}
+            open={versionsOpen}
+            onOpenChange={setVersionsOpen}
+            preview={preview}
+            onOpenPreview={handleOpenVersionPreview}
           />
           <div className="flex flex-1 flex-col overflow-y-auto p-4">
             {messages.length === 0 ? (
