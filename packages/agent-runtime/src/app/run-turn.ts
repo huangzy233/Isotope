@@ -28,6 +28,7 @@ export async function runTurn<TPort = WorkspaceToolPort>(
 ): Promise<RunTurnResult> {
   const {
     llm,
+    model,
     agent,
     port,
     history,
@@ -62,6 +63,7 @@ export async function runTurn<TPort = WorkspaceToolPort>(
     const roundChunks: string[] = [];
 
     for await (const ev of llm.complete({
+      model,
       messages,
       tools: agent.tools,
       signal,

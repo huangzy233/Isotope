@@ -8,7 +8,7 @@ function llmFromScript(
 ): LlmClient {
   let i = 0;
   return {
-    async *complete() {
+    async *complete(_input) {
       const events = rounds[i++] ?? [
         { type: "finished", finishReason: "stop" } as const,
       ];
@@ -18,6 +18,31 @@ function llmFromScript(
 }
 
 describe("runTurn", () => {
+  it("passes model to llm.complete", async () => {
+    const calls: Array<{ model?: string }> = [];
+    const llm: LlmClient = {
+      async *complete(input) {
+        calls.push({ model: input.model });
+        yield { type: "content_delta", text: "ok" };
+        yield { type: "finished", finishReason: "stop" };
+      },
+    };
+    await runTurn({
+      llm,
+      model: "test-model",
+      agent: createCoderAgent({ systemPrompt: "test" }),
+      port: {
+        listFiles: () => [],
+        readFile: () => "",
+        writeFile: () => {},
+      },
+      history: [{ role: "user", content: "hi" }],
+      maxToolRounds: 8,
+      onToken: () => {},
+    });
+    expect(calls[0]?.model).toBe("test-model");
+  });
+
   it("executes write_file tool then streams final text", async () => {
     const files = new Map<string, string>();
     const port = {
@@ -59,6 +84,7 @@ describe("runTurn", () => {
           { type: "finished", finishReason: "stop" },
         ],
       ]),
+      model: "test-model",
       agent,
       port,
       history: [{ role: "user", content: "做一个空页面" }],
@@ -110,6 +136,7 @@ describe("runTurn", () => {
           { type: "finished", finishReason: "stop" },
         ],
       ]),
+      model: "test-model",
       agent,
       port,
       history: [{ role: "user", content: "看看 App" }],
@@ -199,6 +226,7 @@ describe("runTurn", () => {
           { type: "finished", finishReason: "stop" },
         ],
       ]),
+      model: "test-model",
       agent,
       port,
       history: [{ role: "user", content: "写一下" }],
@@ -249,6 +277,7 @@ describe("runTurn", () => {
 
     const result = await runTurn({
       llm: llmFromScript([toolRound("c1"), toolRound("c2")]),
+      model: "test-model",
       agent,
       port,
       history: [{ role: "user", content: "看一眼" }],

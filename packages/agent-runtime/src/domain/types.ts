@@ -36,6 +36,7 @@ export type TurnAgent<TPort = unknown> = {
 
 export type RunTurnInput<TPort = WorkspaceToolPort> = {
   llm: LlmClient;
+  model: string;
   agent: TurnAgent<TPort>;
   port: TPort;
   history: Array<{ role: "user" | "assistant"; content: string }>;
