@@ -172,6 +172,9 @@ importers:
       '@isotope/workspace':
         specifier: workspace:*
         version: link:../workspace
+      yaml:
+        specifier: ^2.6.0
+        version: 2.9.0
     devDependencies:
       '@types/node':
         specifier: ^22.10.0

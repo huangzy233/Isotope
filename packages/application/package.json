@@ -20,7 +20,8 @@
     "@isotope/llm": "workspace:*",
     "@isotope/memory": "workspace:*",
     "@isotope/preview": "workspace:*",
-    "@isotope/workspace": "workspace:*"
+    "@isotope/workspace": "workspace:*",
+    "yaml": "^2.6.0"
   },
 
   "devDependencies": {
