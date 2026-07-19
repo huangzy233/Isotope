@@ -2,8 +2,10 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import {
+  CHECK_LOG_TAIL_CHARS,
   type Sandbox,
   type SandboxBuildInput,
+  type SandboxTypecheckInput,
   SandboxBuildError,
 } from "../domain/types.js";
 
@@ -11,6 +13,7 @@ function runNpm(
   args: string[],
   cwd: string,
   timeoutMs: number,
+  logTailChars = 2048,
 ): Promise<{ code: number; log: string }> {
   return new Promise((resolve, reject) => {
     const child = spawn("npm", args, {
@@ -20,7 +23,7 @@ function runNpm(
     });
     let log = "";
     const append = (buf: Buffer) => {
-      log = (log + buf.toString()).slice(-2048);
+      log = (log + buf.toString()).slice(-logTailChars);
     };
     child.stdout?.on("data", append);
     child.stderr?.on("data", append);
@@ -37,6 +40,22 @@ function runNpm(
       resolve({ code: code ?? 1, log });
     });
   });
+}
+
+function needsNpmInstall(workspaceDir: string): boolean {
+  const pkg = JSON.parse(
+    fs.readFileSync(path.join(workspaceDir, "package.json"), "utf8"),
+  ) as {
+    dependencies?: Record<string, string>;
+    devDependencies?: Record<string, string>;
+  };
+  return (
+    !fs.existsSync(path.join(workspaceDir, "node_modules")) &&
+    Boolean(
+      (pkg.dependencies && Object.keys(pkg.dependencies).length) ||
+        (pkg.devDependencies && Object.keys(pkg.devDependencies).length),
+    )
+  );
 }
 
 /** Preview iframe is under /api/.../files/; root-absolute /assets break. */
@@ -60,19 +79,7 @@ export function createLocalSandbox(): Sandbox {
   return {
     async build(input: SandboxBuildInput) {
       const timeoutMs = input.timeoutMs ?? 300_000;
-      const pkg = JSON.parse(
-        fs.readFileSync(path.join(input.workspaceDir, "package.json"), "utf8"),
-      ) as {
-        dependencies?: Record<string, string>;
-        devDependencies?: Record<string, string>;
-      };
-      const needsInstall =
-        !fs.existsSync(path.join(input.workspaceDir, "node_modules")) &&
-        Boolean(
-          (pkg.dependencies && Object.keys(pkg.dependencies).length) ||
-            (pkg.devDependencies && Object.keys(pkg.devDependencies).length),
-        );
-      if (needsInstall) {
+      if (needsNpmInstall(input.workspaceDir)) {
         const install = await runNpm(["install"], input.workspaceDir, timeoutMs);
         if (install.code !== 0) {
           throw new SandboxBuildError("npm install 失败", install.log);
@@ -96,6 +103,28 @@ export function createLocalSandbox(): Sandbox {
         throw new SandboxBuildError("构建成功但缺少 index.html", built.log);
       }
       ensureRelativePreviewAssets(input.buildDir);
+    },
+
+    async typecheck(input: SandboxTypecheckInput) {
+      const timeoutMs = input.timeoutMs ?? 120_000;
+      if (needsNpmInstall(input.workspaceDir)) {
+        const install = await runNpm(
+          ["install"],
+          input.workspaceDir,
+          timeoutMs,
+          CHECK_LOG_TAIL_CHARS,
+        );
+        if (install.code !== 0) {
+          throw new SandboxBuildError("npm install 失败", install.log);
+        }
+      }
+      const checked = await runNpm(
+        ["exec", "--", "tsc", "-b", "--pretty", "false"],
+        input.workspaceDir,
+        timeoutMs,
+        CHECK_LOG_TAIL_CHARS,
+      );
+      return { ok: checked.code === 0, log: checked.log };
     },
   };
 }
