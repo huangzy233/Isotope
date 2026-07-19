@@ -4,14 +4,14 @@
 
 @layer base {
   :root {
-    /* Neutral Tool — see docs/superpowers/specs/2026-07-18-ui-design-system.md */
+    /* Blue primary tool UI — see docs/superpowers/specs/2026-07-19-blue-primary-login-ui-design.md */
     --background: 210 40% 98%; /* #F8FAFC */
     --foreground: 222 47% 11%; /* #0F172A */
     --card: 0 0% 100%;
     --card-foreground: 222 47% 11%;
     --popover: 0 0% 100%;
     --popover-foreground: 222 47% 11%;
-    --primary: 222 47% 11%; /* near-black, NOT purple */
+    --primary: 221 83% 53%; /* #2563EB */
     --primary-foreground: 0 0% 100%;
     --secondary: 210 40% 96%;
     --secondary-foreground: 222 47% 11%;
@@ -27,7 +27,7 @@
     --warning-foreground: 0 0% 100%;
     --border: 214 32% 91%; /* #E2E8F0 */
     --input: 214 32% 91%;
-    --ring: 222 47% 11%;
+    --ring: 221 83% 53%; /* #2563EB */
     --radius: 0.5rem; /* 8px */
     --shadow-soft: 0 1px 2px rgba(15, 23, 42, 0.04), 0 1px 3px rgba(15, 23, 42, 0.06);
   }

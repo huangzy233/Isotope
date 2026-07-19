@@ -17,7 +17,7 @@
 | Tailwind **语义** class：`bg-background`、`text-muted-foreground`、`border-border` | 硬编码色：`#5B5BF7`、`bg-purple-500`、渐变 |
 | `globals.css` **仅**维护 CSS 变量（tokens） | 组件内大量 `@apply`、炫技 keyframes |
 
-## 2. Color（Neutral Tool）
+## 2. Color（蓝主色工具 UI）
 
 | Token | 用途 | 值 |
 |-------|------|-----|
@@ -27,21 +27,21 @@
 | `--muted` | 弱底 | `#F1F5F9` |
 | `--muted-foreground` | 次要文字 | `#64748B` |
 | `--border` / `--input` | 边框 | `#E2E8F0` |
-| `--primary` | 主按钮 / 焦点 | `#0F172A`（**近黑，非紫**） |
+| `--primary` | 主按钮 / 活跃态 | `#2563EB`（**蓝，非近黑 / 非紫**） |
 | `--primary-foreground` | 主按钮文字 | `#FFFFFF` |
 | `--accent` | 轻悬停底 | `#F1F5F9` |
 | `--accent-foreground` | 悬停文字 | `#0F172A` |
-| `--ring` | focus ring | 与 primary 一致或略透明 |
+| `--ring` | focus ring | `#2563EB`（与 primary 一致） |
 | `--destructive` | 错误 / 危险 | 克制红 |
 | `--success` | 成功 / 完成 | 克制绿 |
 | `--warning` | 进行中 / 注意 | 克制琥珀 |
 
 **规则：**
 
-- Primary **不用于**大面积背景、Hero、渐变、glow。
-- 边框始终 subtle；分层靠留白与字重。
-- 状态色 + 文案；禁止霓虹色与多色图标墙。
-- 链接可与 foreground 同级 underline，或极克制 slate；避免高饱和蓝紫。
+- Primary **不用于**全屏 Hero 大面积铺底、渐变、glow；登录等局部可用 `bg-primary/5` 作克制 tint
+- 边框始终 subtle；分层靠留白与字重
+- 状态色 + 文案；禁止霓虹色与多色图标墙
+- 链接 / 选中态可用 `text-primary`；禁止紫粉装饰墙
 
 ## 3. Typography
 
