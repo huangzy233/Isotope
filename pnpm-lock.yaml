@@ -189,10 +189,6 @@ importers:
   packages/deploy: {}
 
   packages/identity:
-    dependencies:
-      yaml:
-        specifier: ^2.6.0
-        version: 2.9.0
     devDependencies:
       '@types/node':
         specifier: ^22.10.0
