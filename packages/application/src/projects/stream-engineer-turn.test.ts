@@ -990,4 +990,156 @@ describe("beginEngineerTurn", () => {
 
     expect(preferences.getPreferences("demo").ui_language).toBe("zh");
   });
+
+  it("AC2: preference from project 1 injects into project 2 for same user only", async () => {
+    const preferences = createPreferenceStore({ dataRoot });
+
+    const { project: project1 } = createProject(
+      {
+        ownerUserId: "userA",
+        requirement: "项目一",
+        mode: "engineer",
+      },
+      workspace,
+    );
+    const writeBegun = beginEngineerTurn(
+      {
+        ownerUserId: "userA",
+        projectId: project1.id,
+        action: "continue",
+      },
+      {
+        workspace,
+        preferences,
+        preview: mockPreview(),
+        llm: llmFromScript([
+          [
+            {
+              type: "tool_calls",
+              toolCalls: [
+                {
+                  id: "p1",
+                  type: "function",
+                  function: {
+                    name: "set_preference",
+                    arguments: JSON.stringify({
+                      key: "ui_language",
+                      value: "zh",
+                    }),
+                  },
+                },
+              ],
+            },
+            { type: "finished", finishReason: "tool_calls" },
+          ],
+          [
+            { type: "content_delta", text: "已保存偏好" },
+            { type: "finished", finishReason: "stop" },
+          ],
+        ]),
+        agent: createCoderAgent({ systemPrompt: "test" }),
+        model: "test-model",
+        maxToolRounds: 8,
+      },
+    );
+    expect(writeBegun.ok).toBe(true);
+    if (!writeBegun.ok) return;
+    await writeBegun.run();
+
+    const { project: project2 } = createProject(
+      {
+        ownerUserId: "userA",
+        requirement: "项目二",
+        mode: "engineer",
+      },
+      workspace,
+    );
+    let historyA: Array<{ role: string; content?: string | null }> | undefined;
+    const baseA = llmFromScript([
+      [
+        { type: "content_delta", text: "开工" },
+        { type: "finished", finishReason: "stop" },
+      ],
+    ]);
+    const begunA = beginEngineerTurn(
+      {
+        ownerUserId: "userA",
+        projectId: project2.id,
+        action: "continue",
+      },
+      {
+        workspace,
+        preferences,
+        preview: mockPreview(),
+        llm: {
+          async *complete(input) {
+            historyA = input.messages.map((m) => ({
+              role: m.role,
+              content: "content" in m ? m.content : undefined,
+            }));
+            yield* baseA.complete(input);
+          },
+        },
+        agent: createCoderAgent({ systemPrompt: "test" }),
+        model: "test-model",
+        maxToolRounds: 8,
+      },
+    );
+    expect(begunA.ok).toBe(true);
+    if (!begunA.ok) return;
+    await begunA.run();
+
+    const memoryA = historyA?.find(
+      (m) => typeof m.content === "string" && m.content.startsWith("【记忆】"),
+    );
+    expect(memoryA?.content).toContain("ui_language: zh");
+
+    const { project: projectB } = createProject(
+      {
+        ownerUserId: "userB",
+        requirement: "别人的项目",
+        mode: "engineer",
+      },
+      workspace,
+    );
+    let historyB: Array<{ role: string; content?: string | null }> | undefined;
+    const baseB = llmFromScript([
+      [
+        { type: "content_delta", text: "开工" },
+        { type: "finished", finishReason: "stop" },
+      ],
+    ]);
+    const begunB = beginEngineerTurn(
+      {
+        ownerUserId: "userB",
+        projectId: projectB.id,
+        action: "continue",
+      },
+      {
+        workspace,
+        preferences,
+        preview: mockPreview(),
+        llm: {
+          async *complete(input) {
+            historyB = input.messages.map((m) => ({
+              role: m.role,
+              content: "content" in m ? m.content : undefined,
+            }));
+            yield* baseB.complete(input);
+          },
+        },
+        agent: createCoderAgent({ systemPrompt: "test" }),
+        model: "test-model",
+        maxToolRounds: 8,
+      },
+    );
+    expect(begunB.ok).toBe(true);
+    if (!begunB.ok) return;
+    await begunB.run();
+
+    const joinedB = (historyB ?? [])
+      .map((m) => m.content ?? "")
+      .join("\n");
+    expect(joinedB).not.toContain("ui_language: zh");
+  });
 });

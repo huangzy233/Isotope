@@ -157,12 +157,20 @@ export function beginPlanTurn(
             const proj = deps.workspace.getProject(input.projectId);
             if (!proj) return { ok: false, error: "项目不存在" };
             const nextTurn = proj.teamEnabled ? "team" : "engineer";
+            // product-spec 先写成功再改 meta，避免确认态与文件不一致
+            try {
+              writeProductSpec(deps.workspace, input.projectId, s);
+            } catch (e) {
+              return {
+                ok: false,
+                error: e instanceof Error ? e.message : String(e),
+              };
+            }
             deps.workspace.updateProjectMeta(input.projectId, {
               planConfirmed: true,
               confirmedRequirement: s,
               planEnabled: false,
             });
-            writeProductSpec(deps.workspace, input.projectId, s);
             confirmedThisTurn = true;
             nextTurnForDone = nextTurn;
             return { ok: true };

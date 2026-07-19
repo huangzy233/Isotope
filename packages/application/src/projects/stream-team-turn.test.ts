@@ -10,6 +10,7 @@ import type { PreviewService, PreviewStatusSnapshot } from "@isotope/preview";
 import { createFsSqliteWorkspace } from "@isotope/workspace";
 import { createProject } from "./create-project.js";
 import { ASSISTANT_PLACEHOLDER } from "./placeholder.js";
+import { DECISIONS_PATH } from "./project-memory-paths.js";
 import { createTaskEventBus } from "./task-event-bus.js";
 import {
   beginTeamTurn,
@@ -626,6 +627,87 @@ describe("beginTeamTurn", () => {
       new Date(stuckAt).getTime(),
     );
     releaseTurnLock(project.id);
+  });
+
+  it("Alex remember_decision appends decisions.md", async () => {
+    const { project, messages: seeded } = createProject(
+      {
+        ownerUserId: "demo",
+        requirement: "统一文案",
+        mode: "team",
+      },
+      workspace,
+    );
+    workspace.updateMessage(seeded.find((m) => m.role === "assistant")!.id, {
+      content: "先前规划",
+    });
+
+    const rounds: LlmStreamEvent[][] = [
+      [
+        {
+          type: "tool_calls",
+          toolCalls: [
+            {
+              id: "c1",
+              type: "function",
+              function: {
+                name: "create_task",
+                arguments: JSON.stringify({
+                  title: "改标题",
+                  assignee: "Alex",
+                }),
+              },
+            },
+          ],
+        },
+        { type: "finished", finishReason: "tool_calls" },
+      ],
+      [
+        { type: "content_delta", text: "已指派给 Alex" },
+        { type: "finished", finishReason: "stop" },
+      ],
+      [
+        {
+          type: "tool_calls",
+          toolCalls: [
+            {
+              id: "d1",
+              type: "function",
+              function: {
+                name: "remember_decision",
+                arguments: JSON.stringify({ text: "标题用中文" }),
+              },
+            },
+          ],
+        },
+        { type: "finished", finishReason: "tool_calls" },
+      ],
+      [
+        { type: "content_delta", text: "标题已更新" },
+        { type: "finished", finishReason: "stop" },
+      ],
+      [
+        { type: "content_delta", text: "本轮任务已完成。" },
+        { type: "finished", finishReason: "stop" },
+      ],
+    ];
+
+    const begun = beginTeamTurn(
+      {
+        ownerUserId: "demo",
+        projectId: project.id,
+        action: "send",
+        content: "请改首页标题",
+      },
+      teamDeps(workspace, llmFromScript(rounds)),
+    );
+    expect(begun.ok).toBe(true);
+    if (!begun.ok) return;
+    await begun.run();
+
+    expect(workspace.readFile(project.id, DECISIONS_PATH)).toContain(
+      "标题用中文",
+    );
   });
 
   it("retryStuckAssignedTask failure advances lastProgressAt", async () => {

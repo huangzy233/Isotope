@@ -365,6 +365,85 @@ describe("beginPlanTurn", () => {
     ).toBe(true);
   });
 
+  it("confirm_requirement write failure leaves meta unconfirmed", async () => {
+    const { project, messages: seeded } = createProject(
+      {
+        ownerUserId: "demo",
+        requirement: "做一个待办应用",
+        mode: "engineer",
+      },
+      workspace,
+    );
+    enablePlan(workspace, project.id, { teamEnabled: false });
+    workspace.updateMessage(seeded.find((m) => m.role === "assistant")!.id, {
+      content: "先聊聊需求",
+    });
+
+    const origWrite = workspace.writeFile.bind(workspace);
+    vi.spyOn(workspace, "writeFile").mockImplementation(
+      (projectId, relativePath, content) => {
+        if (relativePath === PRODUCT_SPEC_PATH) {
+          throw new Error("disk full");
+        }
+        return origWrite(projectId, relativePath, content);
+      },
+    );
+
+    const begun = beginPlanTurn(
+      {
+        ownerUserId: "demo",
+        projectId: project.id,
+        action: "send",
+        content: "就按这个做吧",
+      },
+      {
+        workspace,
+        preferences: fakePreferences,
+        llm: llmFromScript([
+          [
+            {
+              type: "tool_calls",
+              toolCalls: [
+                {
+                  id: "c1",
+                  type: "function",
+                  function: {
+                    name: "confirm_requirement",
+                    arguments: JSON.stringify({
+                      summary: "待办应用：增删改查",
+                    }),
+                  },
+                },
+              ],
+            },
+            { type: "finished", finishReason: "tool_calls" },
+          ],
+          [
+            { type: "content_delta", text: "写入失败，请重试。" },
+            { type: "finished", finishReason: "stop" },
+          ],
+        ]),
+        agent: createRequirementAgent({ systemPrompt: "test" }),
+        model: "test-model",
+        maxToolRounds: 8,
+      },
+    );
+
+    expect(begun.ok).toBe(true);
+    if (!begun.ok) return;
+
+    const events = await runAndCollect(project.id, begun.run);
+    const again = workspace.getProject(project.id)!;
+    expect(again.planConfirmed).toBe(false);
+    expect(again.planEnabled).toBe(true);
+    expect(again.confirmedRequirement).toBeFalsy();
+    expect(
+      events.some(
+        (e) => e.type === "done" && e.planConfirmed === true,
+      ),
+    ).toBe(false);
+  });
+
   it("unconfirmed turn keeps filesChanged and previewEnqueued false", async () => {
     const { project, messages: seeded } = createProject(
       {
