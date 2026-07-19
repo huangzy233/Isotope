@@ -1,5 +1,5 @@
 import { runTurn } from "@isotope/agent-runtime";
-import type { CoderAgent } from "@isotope/agents";
+import type { CoderAgent, QaAgent } from "@isotope/agents";
 import type { LlmClient } from "@isotope/llm";
 import { isPreferenceKey, type PreferenceStore } from "@isotope/memory";
 import type { PreviewService } from "@isotope/preview";
@@ -14,6 +14,7 @@ import {
   isPlanClarifyGateOpen,
 } from "./plan-gate.js";
 import { ASSISTANT_PLACEHOLDER } from "./placeholder.js";
+import { runQualityLoop } from "./run-quality-loop.js";
 import { isTransportDisconnectError } from "./transport-error.js";
 import {
   destroyTurnHub,
@@ -21,8 +22,13 @@ import {
   publishTurnEvent,
 } from "./turn-hub.js";
 import { releaseTurnLock, tryAcquireTurnLock } from "./turn-lock.js";
+import {
+  createWritePolicyPort,
+  type WritePolicy,
+} from "./write-policy.js";
 
 export type EngineerTurnEvent =
+  | { type: "speaker"; agentName: "Alex" | "QA"; messageId: string }
   | { type: "status"; phase: "thinking" | "running" | "streaming" }
   | { type: "thinking"; text: string }
   | {
@@ -71,6 +77,10 @@ export type EngineerTurnDeps = {
   agent: CoderAgent;
   model: string;
   maxToolRounds: number;
+  writePolicy: WritePolicy;
+  qa: QaAgent;
+  qaModel: string;
+  runTypecheck: (projectId: string) => Promise<{ ok: boolean; log: string }>;
 };
 
 export type BeginEngineerTurnResult =
@@ -79,6 +89,81 @@ export type BeginEngineerTurnResult =
       ok: true;
       run: () => Promise<void>;
     };
+
+function changedPathsBlock(paths: string[]): string {
+  return `【本轮变更】\n${paths.map((p) => `- ${p}`).join("\n")}`;
+}
+
+function trackProcess(
+  process: MessageProcess,
+  publish: (event: EngineerTurnEvent) => void,
+  checkpoint: () => void,
+) {
+  return {
+    onToken: (text: string) => publish({ type: "token", text }),
+    onThinking: (text: string) => {
+      const last = process.steps.at(-1);
+      if (last?.type === "thinking") {
+        last.text += text;
+      } else {
+        process.steps.push({ type: "thinking", text });
+        checkpoint();
+      }
+      publish({ type: "thinking", text });
+    },
+    onTool: (ev: {
+      id: string;
+      name: string;
+      state: "start" | "end";
+      summary?: string;
+      ok?: boolean;
+    }) => {
+      if (ev.state === "start") {
+        process.steps.push({
+          type: "tool",
+          id: ev.id,
+          name: ev.name,
+          status: "running",
+          summary: ev.summary,
+        });
+      } else {
+        const idx = process.steps.findIndex(
+          (s) => s.type === "tool" && s.id === ev.id,
+        );
+        const status = ev.ok === false ? "error" : "done";
+        if (idx >= 0 && process.steps[idx]?.type === "tool") {
+          const prev = process.steps[idx];
+          process.steps[idx] = {
+            type: "tool",
+            id: prev.id,
+            name: prev.name,
+            status,
+            summary: ev.summary ?? prev.summary,
+          };
+        } else {
+          process.steps.push({
+            type: "tool",
+            id: ev.id,
+            name: ev.name,
+            status,
+            summary: ev.summary,
+          });
+        }
+      }
+      checkpoint();
+      publish({
+        type: "tool",
+        id: ev.id,
+        name: ev.name,
+        state: ev.state,
+        summary: ev.summary,
+        ok: ev.ok,
+      });
+    },
+    onStatus: (phase: "thinking" | "running" | "streaming") =>
+      publish({ type: "status", phase }),
+  };
+}
 
 /** 同步：归属 / 占位或 content 校验 / 加锁。失败不持锁。成功后必须调用 run（run 的 finally 释放锁）。 */
 export function beginEngineerTurn(
@@ -154,18 +239,25 @@ export function beginEngineerTurn(
         const project =
           deps.workspace.getProject(input.projectId) ?? owned;
 
-        const { history } = buildTurnContext({
-          messages: deps.workspace.listMessages(input.projectId),
-          project,
-          preferences: deps.preferences.getPreferences(input.ownerUserId),
-          readProjectFile: (p) => {
-            try {
-              return deps.workspace.readFile(input.projectId, p);
-            } catch {
-              return null;
-            }
-          },
-        });
+        const buildHistory = (extraUserContent?: string) => {
+          const { history } = buildTurnContext({
+            messages: deps.workspace.listMessages(input.projectId),
+            project:
+              deps.workspace.getProject(input.projectId) ?? project,
+            preferences: deps.preferences.getPreferences(input.ownerUserId),
+            readProjectFile: (p) => {
+              try {
+                return deps.workspace.readFile(input.projectId, p);
+              } catch {
+                return null;
+              }
+            },
+          });
+          if (extraUserContent) {
+            history.push({ role: "user", content: extraUserContent });
+          }
+          return history;
+        };
 
         const basePort = {
           listFiles: (dir?: string) =>
@@ -204,7 +296,15 @@ export function beginEngineerTurn(
             }
           },
         };
-        const port = createPlanGatedWritePort(project, basePort);
+
+        const alexPort = () => {
+          const latest =
+            deps.workspace.getProject(input.projectId) ?? project;
+          return createPlanGatedWritePort(
+            latest,
+            createWritePolicyPort(deps.writePolicy, basePort),
+          );
+        };
 
         const process: MessageProcess = { steps: [] };
         const checkpoint = () => {
@@ -212,70 +312,25 @@ export function beginEngineerTurn(
             checkpointProcess(deps.workspace, replaceId, process);
           }
         };
+        const callbacks = trackProcess(process, publish, checkpoint);
 
         try {
+          if (replaceId) {
+            publish({
+              type: "speaker",
+              agentName: "Alex",
+              messageId: replaceId,
+            });
+          }
+
           const result = await runTurn({
             llm: deps.llm,
             model: deps.model,
             agent: deps.agent,
-            port,
-            history,
+            port: alexPort(),
+            history: buildHistory(),
             maxToolRounds: deps.maxToolRounds,
-            onToken: (text) => publish({ type: "token", text }),
-            onThinking: (text) => {
-              const last = process.steps.at(-1);
-              if (last?.type === "thinking") {
-                last.text += text;
-              } else {
-                process.steps.push({ type: "thinking", text });
-                checkpoint();
-              }
-              publish({ type: "thinking", text });
-            },
-            onTool: (ev) => {
-              if (ev.state === "start") {
-                process.steps.push({
-                  type: "tool",
-                  id: ev.id,
-                  name: ev.name,
-                  status: "running",
-                  summary: ev.summary,
-                });
-              } else {
-                const idx = process.steps.findIndex(
-                  (s) => s.type === "tool" && s.id === ev.id,
-                );
-                const status = ev.ok === false ? "error" : "done";
-                if (idx >= 0 && process.steps[idx]?.type === "tool") {
-                  const prev = process.steps[idx];
-                  process.steps[idx] = {
-                    type: "tool",
-                    id: prev.id,
-                    name: prev.name,
-                    status,
-                    summary: ev.summary ?? prev.summary,
-                  };
-                } else {
-                  process.steps.push({
-                    type: "tool",
-                    id: ev.id,
-                    name: ev.name,
-                    status,
-                    summary: ev.summary,
-                  });
-                }
-              }
-              checkpoint();
-              publish({
-                type: "tool",
-                id: ev.id,
-                name: ev.name,
-                state: ev.state,
-                summary: ev.summary,
-                ok: ev.ok,
-              });
-            },
-            onStatus: (phase) => publish({ type: "status", phase }),
+            ...callbacks,
           });
 
           const text = result.assistantText || "（无回复内容）";
@@ -295,8 +350,124 @@ export function beginEngineerTurn(
             }).id;
           }
 
+          const quality = await runQualityLoop({
+            projectId: input.projectId,
+            ownerUserId: input.ownerUserId,
+            initial: {
+              writtenPaths: result.writtenPaths,
+              assistantText: text,
+            },
+            runQa: async (changedPaths) => {
+              const qaMsg = deps.workspace.appendMessage({
+                projectId: input.projectId,
+                role: "assistant",
+                content: ASSISTANT_PLACEHOLDER,
+                agentName: "QA",
+              });
+              publish({
+                type: "speaker",
+                agentName: "QA",
+                messageId: qaMsg.id,
+              });
+
+              const qaProcess: MessageProcess = { steps: [] };
+              const qaCheckpoint = () =>
+                checkpointProcess(deps.workspace, qaMsg.id, qaProcess);
+              const qaCallbacks = trackProcess(
+                qaProcess,
+                publish,
+                qaCheckpoint,
+              );
+
+              let checkRan = false;
+              let checkOk = false;
+              const qaPort = {
+                listFiles: (dir?: string) =>
+                  deps.workspace.listFiles(input.projectId, dir),
+                readFile: (p: string) =>
+                  deps.workspace.readFile(input.projectId, p),
+                runCheck: async () => {
+                  checkRan = true;
+                  const r = await deps.runTypecheck(input.projectId);
+                  checkOk = r.ok;
+                  return r;
+                },
+              };
+
+              const qaResult = await runTurn({
+                llm: deps.llm,
+                model: deps.qaModel,
+                agent: deps.qa,
+                port: qaPort,
+                history: buildHistory(changedPathsBlock(changedPaths)),
+                maxToolRounds: deps.maxToolRounds,
+                ...qaCallbacks,
+              });
+
+              const qaText = qaResult.assistantText || "（无质检报告）";
+              deps.workspace.updateMessage(qaMsg.id, {
+                content: qaText,
+                process: qaResult.process,
+              });
+
+              return {
+                assistantText: qaText,
+                checkRan,
+                checkOk,
+              };
+            },
+            runAlexRepair: async (extraUserContent) => {
+              const repairMsg = deps.workspace.appendMessage({
+                projectId: input.projectId,
+                role: "assistant",
+                content: ASSISTANT_PLACEHOLDER,
+                agentName: "Alex",
+              });
+              publish({
+                type: "speaker",
+                agentName: "Alex",
+                messageId: repairMsg.id,
+              });
+
+              const repairProcess: MessageProcess = { steps: [] };
+              const repairCheckpoint = () =>
+                checkpointProcess(
+                  deps.workspace,
+                  repairMsg.id,
+                  repairProcess,
+                );
+              const repairCallbacks = trackProcess(
+                repairProcess,
+                publish,
+                repairCheckpoint,
+              );
+
+              const repairResult = await runTurn({
+                llm: deps.llm,
+                model: deps.model,
+                agent: deps.agent,
+                port: alexPort(),
+                history: buildHistory(extraUserContent),
+                maxToolRounds: deps.maxToolRounds,
+                ...repairCallbacks,
+              });
+
+              const repairText =
+                repairResult.assistantText || "（无回复内容）";
+              deps.workspace.updateMessage(repairMsg.id, {
+                content: repairText,
+                process: repairResult.process,
+              });
+
+              return {
+                writtenPaths: repairResult.writtenPaths,
+                assistantText: repairText,
+              };
+            },
+          });
+
           let previewEnqueued = false;
-          if (result.filesChanged) {
+          if (quality.shouldEnqueuePreview) {
             const latest =
               deps.workspace.getProject(input.projectId) ?? project;
             if (!isPlanClarifyGateOpen(latest)) {

@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createCoderAgent } from "@isotope/agents";
+import { createCoderAgent, createQaAgent } from "@isotope/agents";
 import type { LlmClient, LlmStreamEvent } from "@isotope/llm";
 import {
   createPreferenceStore,
@@ -52,6 +52,65 @@ function mockPreview(
     enqueueBuild: vi.fn(() => readySnapshot()),
     readAsset: vi.fn(() => null),
     ...overrides,
+  };
+}
+
+const DEFAULT_WRITE_POLICY = { allow: ["src/**", "index.html"] };
+
+function engineerExtras(overrides: {
+  runTypecheck?: (projectId: string) => Promise<{ ok: boolean; log: string }>;
+} = {}) {
+  return {
+    writePolicy: DEFAULT_WRITE_POLICY,
+    qa: createQaAgent({ systemPrompt: "test-qa" }),
+    qaModel: "test-qa-model",
+    runTypecheck:
+      overrides.runTypecheck ??
+      (async () => ({ ok: true as const, log: "" })),
+  };
+}
+
+function isQaTools(
+  tools: Array<{ function: { name: string } }> | undefined,
+): boolean {
+  return !!tools?.some((t) => t.function.name === "run_check");
+}
+
+/** QA rounds auto-call run_check then emit PASS/FAIL report text. */
+function withAutoQa(
+  base: LlmClient,
+  outcome: "pass" | "fail",
+): LlmClient {
+  let awaitingReport = false;
+  const report =
+    outcome === "pass"
+      ? "【质检结果】PASS\n检查：typecheck\n问题：无"
+      : "【质检结果】FAIL\n检查：typecheck\n问题：still broken";
+  return {
+    async *complete(input) {
+      if (isQaTools(input.tools)) {
+        if (!awaitingReport) {
+          awaitingReport = true;
+          yield {
+            type: "tool_calls" as const,
+            toolCalls: [
+              {
+                id: "qa-check",
+                type: "function" as const,
+                function: { name: "run_check", arguments: "{}" },
+              },
+            ],
+          };
+          yield { type: "finished" as const, finishReason: "tool_calls" };
+          return;
+        }
+        awaitingReport = false;
+        yield { type: "content_delta" as const, text: report };
+        yield { type: "finished" as const, finishReason: "stop" };
+        return;
+      }
+      yield* base.complete(input);
+    },
   };
 }
 
@@ -130,35 +189,39 @@ describe("beginEngineerTurn", () => {
         workspace,
         preferences: fakePreferences,
         preview,
-        llm: llmFromScript([
-          [
-            {
-              type: "tool_calls",
-              toolCalls: [
-                {
-                  id: "c1",
-                  type: "function",
-                  function: {
-                    name: "write_file",
-                    arguments: JSON.stringify({
-                      path: "src/App.tsx",
-                      content:
-                        "export default function App(){return null}",
-                    }),
+        llm: withAutoQa(
+          llmFromScript([
+            [
+              {
+                type: "tool_calls",
+                toolCalls: [
+                  {
+                    id: "c1",
+                    type: "function",
+                    function: {
+                      name: "write_file",
+                      arguments: JSON.stringify({
+                        path: "src/App.tsx",
+                        content:
+                          "export default function App(){return null}",
+                      }),
+                    },
                   },
-                },
-              ],
-            },
-            { type: "finished", finishReason: "tool_calls" },
-          ],
-          [
-            { type: "content_delta", text: "已更新 App" },
-            { type: "finished", finishReason: "stop" },
-          ],
-        ]),
+                ],
+              },
+              { type: "finished", finishReason: "tool_calls" },
+            ],
+            [
+              { type: "content_delta", text: "已更新 App" },
+              { type: "finished", finishReason: "stop" },
+            ],
+          ]),
+          "pass",
+        ),
         agent: createCoderAgent({ systemPrompt: "test" }),
         model: "test-model",
         maxToolRounds: 8,
+        ...engineerExtras(),
       },
     );
 
@@ -168,12 +231,16 @@ describe("beginEngineerTurn", () => {
     const events = await runAndCollect(project.id, begun.run);
 
     const messages = workspace.listMessages(project.id);
-    const last = messages.at(-1);
-    expect(last?.role).toBe("assistant");
-    expect(last?.content).toBe("已更新 App");
-    expect(last?.content).not.toBe(ASSISTANT_PLACEHOLDER);
-    expect(last?.process?.steps.some((s) => s.type === "tool")).toBe(true);
+    const alex = messages.find(
+      (m) => m.agentName === "Alex" && m.content === "已更新 App",
+    );
+    const qa = messages.find((m) => m.agentName === "QA");
+    expect(alex).toBeTruthy();
+    expect(qa?.content).toContain("【质检结果】PASS");
+    expect(alex?.content).not.toBe(ASSISTANT_PLACEHOLDER);
+    expect(alex?.process?.steps.some((s) => s.type === "tool")).toBe(true);
     expect(workspace.readFile(project.id, "src/App.tsx")).toContain("App");
+    expect(preview.enqueueBuild).toHaveBeenCalledTimes(1);
     expect(preview.enqueueBuild).toHaveBeenCalledWith(project.id);
     expect(events.some((e) => e.type === "token" && e.text === "已更新 App")).toBe(
       true,
@@ -196,9 +263,92 @@ describe("beginEngineerTurn", () => {
           e.type === "done" &&
           e.filesChanged === true &&
           e.previewEnqueued === true &&
-          e.messageId === last?.id,
+          e.messageId === alex?.id,
       ),
     ).toBe(true);
+    expect(
+      events.some((e) => e.type === "speaker" && e.agentName === "QA"),
+    ).toBe(true);
+  });
+
+  it("does not enqueue preview when QA checkOk stays false through max repairs", async () => {
+    const { project } = createProject(
+      {
+        ownerUserId: "demo",
+        requirement: "做一个空页面",
+        mode: "engineer",
+      },
+      workspace,
+    );
+    const preview = mockPreview();
+
+    const begun = beginEngineerTurn(
+      {
+        ownerUserId: "demo",
+        projectId: project.id,
+        action: "continue",
+      },
+      {
+        workspace,
+        preferences: fakePreferences,
+        preview,
+        llm: withAutoQa(
+          llmFromScript([
+            [
+              {
+                type: "tool_calls",
+                toolCalls: [
+                  {
+                    id: "c1",
+                    type: "function",
+                    function: {
+                      name: "write_file",
+                      arguments: JSON.stringify({
+                        path: "src/App.tsx",
+                        content:
+                          "export default function App(){return null}",
+                      }),
+                    },
+                  },
+                ],
+              },
+              { type: "finished", finishReason: "tool_calls" },
+            ],
+            [
+              { type: "content_delta", text: "已更新 App" },
+              { type: "finished", finishReason: "stop" },
+            ],
+          ]),
+          "fail",
+        ),
+        agent: createCoderAgent({ systemPrompt: "test" }),
+        model: "test-model",
+        maxToolRounds: 8,
+        ...engineerExtras({
+          runTypecheck: async () => ({ ok: false, log: "error TS" }),
+        }),
+      },
+    );
+
+    expect(begun.ok).toBe(true);
+    if (!begun.ok) return;
+
+    const events = await runAndCollect(project.id, begun.run);
+
+    expect(preview.enqueueBuild).not.toHaveBeenCalled();
+    expect(
+      events.some(
+        (e) =>
+          e.type === "done" &&
+          e.filesChanged === true &&
+          e.previewEnqueued === false,
+      ),
+    ).toBe(true);
+    const qaMessages = workspace
+      .listMessages(project.id)
+      .filter((m) => m.agentName === "QA");
+    expect(qaMessages.length).toBeGreaterThanOrEqual(3);
+    expect(qaMessages.at(-1)?.content).toContain("【质检结果】FAIL");
   });
 
   it("does not put process text into llm history", async () => {
@@ -255,6 +405,7 @@ describe("beginEngineerTurn", () => {
         agent: createCoderAgent({ systemPrompt: "test" }),
         model: "test-model",
         maxToolRounds: 8,
+        ...engineerExtras(),
       },
     );
 
@@ -305,6 +456,7 @@ describe("beginEngineerTurn", () => {
         agent: createCoderAgent({ systemPrompt: "test" }),
         model: "test-model",
         maxToolRounds: 8,
+        ...engineerExtras(),
       },
     );
 
@@ -356,6 +508,7 @@ describe("beginEngineerTurn", () => {
         agent: createCoderAgent({ systemPrompt: "test" }),
         model: "test-model",
         maxToolRounds: 8,
+        ...engineerExtras(),
       },
     );
 
@@ -399,6 +552,7 @@ describe("beginEngineerTurn", () => {
       agent: createCoderAgent({ systemPrompt: "test" }),
       model: "test-model",
       maxToolRounds: 8,
+      ...engineerExtras(),
     };
 
     const a = beginEngineerTurn(
@@ -456,6 +610,7 @@ describe("beginEngineerTurn", () => {
         agent: createCoderAgent({ systemPrompt: "test" }),
         model: "test-model",
         maxToolRounds: 8,
+        ...engineerExtras(),
       },
     );
 
@@ -501,6 +656,7 @@ describe("beginEngineerTurn", () => {
         agent: createCoderAgent({ systemPrompt: "test" }),
         model: "test-model",
         maxToolRounds: 8,
+        ...engineerExtras(),
       },
     );
 
@@ -545,6 +701,7 @@ describe("beginEngineerTurn", () => {
         agent: createCoderAgent({ systemPrompt: "test" }),
         model: "test-model",
         maxToolRounds: 8,
+        ...engineerExtras(),
       },
     );
     expect(begun.ok).toBe(true);
@@ -614,6 +771,7 @@ describe("beginEngineerTurn", () => {
         agent: createCoderAgent({ systemPrompt: "test" }),
         model: "test-model",
         maxToolRounds: 8,
+        ...engineerExtras(),
       },
     );
     expect(begun.ok).toBe(true);
@@ -685,6 +843,7 @@ describe("beginEngineerTurn", () => {
         agent: createCoderAgent({ systemPrompt: "test" }),
         model: "test-model",
         maxToolRounds: 8,
+        ...engineerExtras(),
       },
     );
 
@@ -765,6 +924,7 @@ describe("beginEngineerTurn", () => {
         agent: createCoderAgent({ systemPrompt: "test" }),
         model: "test-model",
         maxToolRounds: 8,
+        ...engineerExtras(),
       },
     );
 
@@ -815,6 +975,7 @@ describe("beginEngineerTurn", () => {
         agent: createCoderAgent({ systemPrompt: "test" }),
         model: "test-model",
         maxToolRounds: 8,
+        ...engineerExtras(),
       },
     );
 
@@ -862,6 +1023,7 @@ describe("beginEngineerTurn", () => {
         agent: createCoderAgent({ systemPrompt: "test" }),
         model: "test-model",
         maxToolRounds: 8,
+        ...engineerExtras(),
       },
     );
     expect(begun.ok).toBe(true);
@@ -923,6 +1085,7 @@ describe("beginEngineerTurn", () => {
         agent: createCoderAgent({ systemPrompt: "test" }),
         model: "test-model",
         maxToolRounds: 8,
+        ...engineerExtras(),
       },
     );
     expect(begun.ok).toBe(true);
@@ -982,6 +1145,7 @@ describe("beginEngineerTurn", () => {
         agent: createCoderAgent({ systemPrompt: "test" }),
         model: "test-model",
         maxToolRounds: 8,
+        ...engineerExtras(),
       },
     );
     expect(begun.ok).toBe(true);
@@ -1040,6 +1204,7 @@ describe("beginEngineerTurn", () => {
         agent: createCoderAgent({ systemPrompt: "test" }),
         model: "test-model",
         maxToolRounds: 8,
+        ...engineerExtras(),
       },
     );
     expect(writeBegun.ok).toBe(true);
@@ -1083,6 +1248,7 @@ describe("beginEngineerTurn", () => {
         agent: createCoderAgent({ systemPrompt: "test" }),
         model: "test-model",
         maxToolRounds: 8,
+        ...engineerExtras(),
       },
     );
     expect(begunA.ok).toBe(true);
@@ -1131,6 +1297,7 @@ describe("beginEngineerTurn", () => {
         agent: createCoderAgent({ systemPrompt: "test" }),
         model: "test-model",
         maxToolRounds: 8,
+        ...engineerExtras(),
       },
     );
     expect(begunB.ok).toBe(true);

@@ -3,7 +3,11 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createCoderAgent, createRequirementAgent } from "@isotope/agents";
+import {
+  createCoderAgent,
+  createQaAgent,
+  createRequirementAgent,
+} from "@isotope/agents";
 import type { LlmClient, LlmStreamEvent } from "@isotope/llm";
 import type { PreferenceStore } from "@isotope/memory";
 import type { PreviewService, PreviewStatusSnapshot } from "@isotope/preview";
@@ -267,6 +271,10 @@ describe("beginPlanTurn", () => {
         agent: createCoderAgent({ systemPrompt: "test" }),
         model: "test-model",
         maxToolRounds: 8,
+        writePolicy: { allow: ["src/**", "index.html"] },
+        qa: createQaAgent({ systemPrompt: "test-qa" }),
+        qaModel: "test-qa-model",
+        runTypecheck: async () => ({ ok: true, log: "" }),
       },
     );
     expect(handoff.ok).toBe(true);
