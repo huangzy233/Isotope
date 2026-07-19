@@ -42,7 +42,7 @@ Isotope 作为 AI 产品的界面结构与状态机。
 | Agent | **角色名 + 身份标签**（如 `Alex \| 工程师`）；Badge + Body（GFM Markdown） |
 | System | Secondary / Metadata 语气 |
 | Tool | 见 §4 |
-| Version | 版本号 + 一句话摘要（弱边框即可） |
+| Version | 版本号 + 一句话摘要（弱边框即可）；可从对话顶栏「版本」Dialog 浏览全部记录；「查看预览」仅当该版本对应**当前** App Viewer 产物时可点 |
 
 避免彩色气泡墙；靠对齐、字重、极弱背景区分。
 

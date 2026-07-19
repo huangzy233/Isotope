@@ -2,14 +2,24 @@
 
 import type { JSX } from "react";
 import { Sparkles } from "lucide-react";
+import { Button } from "@/components/ui/button";
 
 export function VersionCard(props: {
   number: number;
   summary: string;
+  canOpenPreview?: boolean;
+  onOpenPreview?: () => void;
+  unavailableReason?: string;
 }): JSX.Element {
-  const { number, summary } = props;
+  const { number, summary, canOpenPreview, onOpenPreview, unavailableReason } =
+    props;
+  const showPreview = Boolean(canOpenPreview && onOpenPreview);
+
   return (
-    <div className="relative overflow-hidden rounded-2xl border border-[#d8defa] bg-[#f3f5ff] px-4 py-3.5">
+    <div
+      className="relative overflow-hidden rounded-2xl border border-[#d8defa] bg-[#f3f5ff] px-4 py-3.5"
+      title={showPreview ? undefined : unavailableReason}
+    >
       <div
         aria-hidden
         className="pointer-events-none absolute -right-1 top-2 text-[#c9d0f5]/70"
@@ -32,6 +42,16 @@ export function VersionCard(props: {
           <p className="mt-1 text-xs leading-relaxed text-[#4a4e69]">
             {summary}
           </p>
+          {showPreview ? (
+            <Button
+              type="button"
+              variant="link"
+              className="mt-1 h-auto px-0 text-xs"
+              onClick={onOpenPreview}
+            >
+              查看预览
+            </Button>
+          ) : null}
         </div>
       </div>
     </div>

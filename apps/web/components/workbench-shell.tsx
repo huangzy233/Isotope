@@ -27,6 +27,10 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { WorkspaceEditorPane } from "@/components/workspace-editor-pane";
 import { cn } from "@/lib/utils";
+import {
+  canOpenPreview,
+  previewAvailabilityLabel,
+} from "@/lib/version-preview";
 
 const DEFAULT_CHAT_PCT = 33.333;
 const MIN_CHAT_PCT = 22;
@@ -334,6 +338,9 @@ export function WorkbenchShell({
   const [preview, setPreview] = useState<PreviewSnapshot | null>(null);
   const [viewerMode, setViewerMode] = useState<ViewerMode>("preview");
   const [versionsOpen, setVersionsOpen] = useState(false);
+  const [versionRevisions, setVersionRevisions] = useState<
+    Record<number, string | null>
+  >({});
   const splitRef = useRef<HTMLDivElement>(null);
   const continuedRef = useRef(false);
   const continueInFlightRef = useRef(false);
@@ -383,6 +390,27 @@ export function WorkbenchShell({
     setVersionsOpen(false);
     persistViewerMode("preview");
   }
+
+  const refreshVersionRevisions = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/projects/${project.id}/versions`);
+      if (!res.ok) return;
+      const data = (await res.json()) as {
+        versions: { number: number; previewRevision: string | null }[];
+      };
+      const next: Record<number, string | null> = {};
+      for (const v of data.versions) next[v.number] = v.previewRevision;
+      setVersionRevisions(next);
+    } catch {
+      // keep last known map on network errors
+    }
+  }, [project.id]);
+
+  useEffect(() => {
+    if (initialMessages.some((m) => m.versionId != null)) {
+      void refreshVersionRevisions();
+    }
+  }, [initialMessages, refreshVersionRevisions]);
 
   useEffect(() => {
     void (async () => {
@@ -603,6 +631,9 @@ export function WorkbenchShell({
           const hasNewVersion = data.messages.some(
             (m) => m.versionId && !knownIds.has(m.id),
           );
+          if (hasNewVersion) {
+            void refreshVersionRevisions();
+          }
           if (hasNewVersion || attempt === 3) return;
         }
       } catch {
@@ -610,7 +641,7 @@ export function WorkbenchShell({
       }
       await new Promise((r) => setTimeout(r, 800));
     }
-  }, [project.id]);
+  }, [project.id, refreshVersionRevisions]);
 
   useEffect(() => {
     const prev = prevPreviewStatusRef.current;
@@ -1096,6 +1127,9 @@ export function WorkbenchShell({
                       !message.content &&
                       agentStatus !== "idle"
                     }
+                    preview={preview}
+                    versionRevisions={versionRevisions}
+                    onOpenPreview={handleOpenVersionPreview}
                   />
                 ))}
               </ul>
@@ -1264,11 +1298,17 @@ function MessageRow({
   task,
   thinkingOpen = false,
   showContentSkeleton = false,
+  preview,
+  versionRevisions,
+  onOpenPreview,
 }: {
   message: Message;
   task?: Task;
   thinkingOpen?: boolean;
   showContentSkeleton?: boolean;
+  preview: PreviewSnapshot | null;
+  versionRevisions: Record<number, string | null>;
+  onOpenPreview: () => void;
 }) {
   const isUser = message.role === "user";
   const effectiveName = message.agentName ?? "Alex";
@@ -1280,9 +1320,23 @@ function MessageRow({
       : effectiveName;
 
   if (message.versionId != null && message.versionNumber != null) {
+    const revision = versionRevisions[message.versionNumber] ?? null;
     return (
       <li className="mr-8 flex flex-col items-start gap-1">
-        <VersionCard number={message.versionNumber} summary={message.content} />
+        <VersionCard
+          number={message.versionNumber}
+          summary={message.content}
+          canOpenPreview={canOpenPreview({ previewRevision: revision }, preview)}
+          unavailableReason={
+            previewAvailabilityLabel(
+              { previewRevision: revision },
+              preview,
+            ) === "可预览"
+              ? undefined
+              : "仅当前预览产物可打开"
+          }
+          onOpenPreview={onOpenPreview}
+        />
       </li>
     );
   }
