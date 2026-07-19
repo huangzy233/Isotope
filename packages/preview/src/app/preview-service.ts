@@ -82,7 +82,9 @@ function contentTypeFor(filePath: string): string {
 function formatError(err: unknown): string {
   let text: string;
   if (err instanceof SandboxBuildError) {
-    text = err.logTail || err.message;
+    text = err.logTail
+      ? `${err.message}\n${err.logTail}`
+      : err.message;
   } else if (err instanceof Error) {
     text = err.message;
   } else {

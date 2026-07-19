@@ -52,4 +52,42 @@ describe("createLocalSandbox", () => {
       sandbox.build({ workspaceDir, buildDir, timeoutMs: 60_000 }),
     ).rejects.toBeInstanceOf(SandboxBuildError);
   });
+
+  it("copies workspace/dist to buildDir when vite defaults to dist", async () => {
+    fs.writeFileSync(
+      path.join(workspaceDir, "package.json"),
+      JSON.stringify({
+        name: "fixture",
+        private: true,
+        scripts: {
+          build:
+            "node -e \"const fs=require('fs');fs.mkdirSync('dist',{recursive:true});fs.writeFileSync('dist/index.html','from-dist')\"",
+        },
+      }),
+    );
+    const sandbox = createLocalSandbox();
+    await sandbox.build({ workspaceDir, buildDir, timeoutMs: 60_000 });
+    expect(fs.readFileSync(path.join(buildDir, "index.html"), "utf8")).toBe(
+      "from-dist",
+    );
+  });
+
+  it("rewrites absolute /assets URLs to relative for iframe preview", async () => {
+    fs.writeFileSync(
+      path.join(workspaceDir, "package.json"),
+      JSON.stringify({
+        name: "fixture",
+        private: true,
+        scripts: {
+          build:
+            "node -e \"const fs=require('fs');const p=require('path');const b=p.join('..','build');fs.mkdirSync(p.join(b,'assets'),{recursive:true});fs.writeFileSync(p.join(b,'assets','app.js'),'1');fs.writeFileSync(p.join(b,'index.html'),'<!doctype html><script type=\\\"module\\\" src=\\\"/assets/app.js\\\"></script>')\"",
+        },
+      }),
+    );
+    const sandbox = createLocalSandbox();
+    await sandbox.build({ workspaceDir, buildDir, timeoutMs: 60_000 });
+    const html = fs.readFileSync(path.join(buildDir, "index.html"), "utf8");
+    expect(html).toContain('src="./assets/app.js"');
+    expect(html).not.toContain('src="/assets/app.js"');
+  });
 });

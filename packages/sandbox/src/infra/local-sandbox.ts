@@ -39,6 +39,23 @@ function runNpm(
   });
 }
 
+/** Preview iframe is under /api/.../files/; root-absolute /assets break. */
+export function rewriteRootAbsoluteAssets(html: string): string {
+  return html.replaceAll(
+    /(src|href)="\/assets\//g,
+    '$1="./assets/',
+  );
+}
+
+function ensureRelativePreviewAssets(buildDir: string): void {
+  const indexPath = path.join(buildDir, "index.html");
+  const html = fs.readFileSync(indexPath, "utf8");
+  const next = rewriteRootAbsoluteAssets(html);
+  if (next !== html) {
+    fs.writeFileSync(indexPath, next);
+  }
+}
+
 export function createLocalSandbox(): Sandbox {
   return {
     async build(input: SandboxBuildInput) {
@@ -65,9 +82,20 @@ export function createLocalSandbox(): Sandbox {
       if (built.code !== 0) {
         throw new SandboxBuildError("构建失败", built.log);
       }
-      if (!fs.existsSync(path.join(input.buildDir, "index.html"))) {
+      const indexInBuild = path.join(input.buildDir, "index.html");
+      if (!fs.existsSync(indexInBuild)) {
+        // Agents often reset vite outDir to default `dist/`; preview serves `build/`.
+        const distDir = path.join(input.workspaceDir, "dist");
+        const indexInDist = path.join(distDir, "index.html");
+        if (fs.existsSync(indexInDist)) {
+          fs.mkdirSync(input.buildDir, { recursive: true });
+          fs.cpSync(distDir, input.buildDir, { recursive: true });
+        }
+      }
+      if (!fs.existsSync(indexInBuild)) {
         throw new SandboxBuildError("构建成功但缺少 index.html", built.log);
       }
+      ensureRelativePreviewAssets(input.buildDir);
     },
   };
 }
